@@ -1,0 +1,52 @@
+{
+  "uid": "tinyforge-gpu",
+  "title": "tinyforge: GPU",
+  "tags": ["tinyforge", "gpu"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "GPU utilization",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "nvidia_smi_utilization_gpu_ratio", "legendFormat": "{{uuid}}" }]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "VRAM used vs total",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "nvidia_smi_memory_used_bytes", "legendFormat": "used {{uuid}}" },
+        { "refId": "B", "expr": "nvidia_smi_memory_total_bytes", "legendFormat": "total {{uuid}}" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Temperature",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "nvidia_smi_temperature_gpu", "legendFormat": "{{uuid}}" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Power draw",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "watt", "min": 0 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "nvidia_smi_power_draw_watts", "legendFormat": "{{uuid}}" }]
+    },
+    {
+      "id": 5, "type": "stat", "title": "PCIe link width (current / max)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "nvidia_smi_pcie_link_width_current", "legendFormat": "current" },
+        { "refId": "B", "expr": "nvidia_smi_pcie_link_width_max", "legendFormat": "max" }
+      ]
+    }
+  ]
+}

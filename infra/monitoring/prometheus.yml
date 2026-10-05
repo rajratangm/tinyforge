@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["localhost:9090"] }]
+
+  - job_name: gpu
+    static_configs: [{ targets: ["nvidia-gpu-exporter:9835"] }]
+
+  # Added when the tinyforge API exposes /metrics (loss, tok/s, step, queue depth). Not implemented yet:
+  # - job_name: tinyforge
+  #   authorization: { credentials_file: /etc/prometheus/tinyforge_token }
+  #   static_configs: [{ targets: ["host.docker.internal:8000"] }]

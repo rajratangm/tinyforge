@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tinyforge.dev/schema/jobspec.v1alpha1.json",
+  "title": "TrainingJob (tinyforge.dev/v1alpha1)",
+  "description": "Declarative job spec. forgectl validates it, the agent/operator schedules it, the Python worker executes it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "tinyforge.dev/v1alpha1" },
+    "kind": { "const": "TrainingJob" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" },
+        "namespace": { "type": "string", "default": "default" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "model", "data"],
+      "properties": {
+        "method": { "enum": ["lora", "qlora", "full"], "description": "full is reserved; the worker rejects it until implemented." },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base"],
+          "properties": {
+            "base": { "type": "string", "description": "HF repo id or local path. Must match the cluster model allowlist." },
+            "revision": { "type": "string", "description": "Pin a commit sha. Required when policy.requirePinnedModels is on." },
+            "trustRemoteCode": { "const": false, "default": false }
+          }
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "type": "string", "description": "Dataset reference: HF id, s3://, or a path on a mounted volume." },
+            "format": { "enum": ["sql-create-context", "alpaca", "chat-jsonl", "text"], "default": "text" },
+            "limit": { "type": "integer", "minimum": 1 },
+            "valPercent": { "type": "integer", "minimum": 1, "maximum": 50, "default": 5 },
+            "maxLen": { "type": "integer", "minimum": 16, "default": 512 }
+          }
+        },
+        "hyperparameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxSteps": { "type": "integer", "minimum": 1, "default": 300 },
+            "learningRate": { "type": "number", "exclusiveMinimum": 0, "default": 0.0002 },
+            "warmupSteps": { "type": "integer", "minimum": 0, "default": 20 },
+            "gradClip": { "type": "number", "exclusiveMinimum": 0, "default": 1.0 },
+            "batchSize": { "type": "integer", "minimum": 1, "default": 4, "description": "Micro-batch; the planner may raise it." },
+            "gradAccum": { "type": "integer", "minimum": 1, "default": 4 },
+            "loraR": { "type": "integer", "minimum": 1, "default": 16 },
+            "loraAlpha": { "type": "integer", "minimum": 1, "default": 32 },
+            "loraDropout": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.0 },
+            "gradCheckpointing": { "type": "boolean", "default": false },
+            "seed": { "type": "integer", "default": 1337 }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "gpus": { "type": "integer", "minimum": 0, "default": 1, "description": "GPUs per node. Worker v1 supports 0 or 1." },
+            "nodes": { "type": "integer", "minimum": 1, "default": 1, "description": "Worker v1 supports 1. Multi-node is a later phase." },
+            "gpuModel": { "type": "string", "description": "Optional scheduling constraint, e.g. NVIDIA-A100-SXM4-80GB." },
+            "minVramGb": { "type": "number", "minimum": 0 },
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        },
+        "checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "everySteps": { "type": "integer", "minimum": 1, "default": 50 },
+            "resume": { "type": "boolean", "default": true },
+            "output": { "type": "string", "description": "Where artifacts go (volume path or s3://). Default: the job's scratch volume." }
+          }
+        },
+        "gates": {
+          "type": "array",
+          "description": "Eval gates. A failed gate marks the job Failed and blocks promotion; it never deletes artifacts.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["metric", "op", "value"],
+            "properties": {
+              "metric": { "enum": ["val_loss", "gain_pct", "task_exact_match_gain_pts", "forgetting_pct"] },
+              "op": { "enum": ["<", "<=", ">", ">="] },
+              "value": { "type": "number" }
+            }
+          }
+        },
+        "export": {
+          "type": "array",
+          "items": { "enum": ["adapter", "merged", "gguf-f16", "gguf-q8_0", "gguf-q4_k_m"] },
+          "uniqueItems": true,
+          "default": ["adapter"]
+        }
+      }
+    }
+  }
+}

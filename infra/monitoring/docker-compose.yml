@@ -1,0 +1,60 @@
+# Local monitoring stack: Prometheus + Grafana + NVIDIA GPU exporter.
+# Everything binds to 127.0.0.1 only. Grafana needs GF_ADMIN_PASSWORD in infra/monitoring/.env (git-ignored):
+#   cp .env.example .env   # then edit
+#   docker compose up -d
+# Datacenter (Linux) note: swap nvidia-gpu-exporter for NVIDIA dcgm-exporter (richer: XID, ECC, NVLink); see README.
+name: tinyforge-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    depends_on: [nvidia-gpu-exporter]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:?set GF_ADMIN_PASSWORD in infra/monitoring/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    depends_on: [prometheus]
+
+  # Reads nvidia-smi inside the container; needs the NVIDIA container runtime (works with Docker Desktop + WSL2).
+  nvidia-gpu-exporter:
+    image: utkuozdemir/nvidia_gpu_exporter:1.3.1
+    ports: ["127.0.0.1:9835:9835"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]
+
+volumes:
+  prometheus-data:
+  grafana-data:

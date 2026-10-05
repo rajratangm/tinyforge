@@ -1,0 +1,75 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { python: ["3.10", "3.12"] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}", cache: pip }
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q
+
+  # forgectl (Go control CLI): vet, unit tests, build, and validate the example spec with the built binary.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build -o forgectl ./cmd/forgectl
+      - run: ./forgectl validate -f spec/examples/sql-finetune.yaml
+
+  # Known-vulnerability scan of the installed Python dependency tree. Advisory for now (continue-on-error):
+  # make it blocking once the baseline is clean and dependencies are locked.
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e . pip-audit
+      - run: pip-audit
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=infra/terraform init -backend=false
+      - run: terraform -chdir=infra/terraform fmt -check -recursive
+      - run: terraform -chdir=infra/terraform validate
+
+  docker:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: { context: ., push: false, cache-from: type=gha, cache-to: "type=gha,mode=max" }
+
+  # Real-GPU training/eval gate: runs on a self-hosted GPU runner (see infra/terraform).
+  gpu-e2e:
+    if: github.ref == 'refs/heads/main'
+    needs: [lint-test]
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -e ".[dev]"
+      - run: tinyforge pipeline --preset micro --steps 300

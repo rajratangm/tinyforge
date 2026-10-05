@@ -1,0 +1,24 @@
+apiVersion: tinyforge.dev/v1alpha1
+kind: TrainingJob
+metadata:
+  name: sql-smollm2-360m
+  labels:
+    team: demo
+spec:
+  method: lora
+  model:
+    base: HuggingFaceTB/SmolLM2-360M
+  data:
+    source: b-mc2/sql-create-context
+    format: sql-create-context
+    limit: 4000
+    maxLen: 384
+  hyperparameters:
+    maxSteps: 240
+  resources:
+    gpus: 1
+  checkpoint:
+    everySteps: 50
+  gates:
+    - { metric: task_exact_match_gain_pts, op: ">=", value: 20 }
+  export: [adapter, merged, gguf-q8_0, gguf-q4_k_m]

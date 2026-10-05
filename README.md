@@ -1,0 +1,88 @@
+# tinyforge
+
+Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed against a 4 GB RTX 3050 Ti).
+One engine, three front doors: **CLI** (for developers/CI), **REST API**, and a **web UI** (which can later be
+wrapped as a desktop app with Tauri/Electron without changing the backend).
+
+## Quick start
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu124   # or /cpu
+pip install -e ".[dev]"            # add ,triton for fused kernels
+tinyforge doctor                   # hardware + warnings, with fixes
+tinyforge pipeline --preset micro --steps 2000   # doctor -> data -> plan -> train -> eval
+tinyforge generate "ROMEO:" --int8
+tinyforge serve                    # UI at http://127.0.0.1:8000
+```
+
+## What you get
+
+| Stage | What it does | Guard rails (warning codes) |
+|---|---|---|
+| `doctor` | GPU/VRAM/bf16/Triton/JAX probe | HW001-HW008 |
+| `data prepare` | download or ingest text, train BPE, contiguous train/val split | DQ001-DQ005: tiny corpus, duplicates, bad vocab |
+| `plan` | VRAM estimate; auto-enables grad checkpointing, shrinks micro-batch, keeps effective batch | PL001-PL005 |
+| `train` | AMP (bf16/fp16+scaler), grad accumulation, cosine LR, atomic checkpoints, auto-resume | TR001 NaN skip/abort, TR002 overfit, TR003 plateau |
+| `eval` | perplexity vs random baseline, diversity, memorisation, determinism, KV-cache correctness, speed/VRAM | EV001-EV009, non-zero exit on failure |
+| `generate`/`serve` | KV-cache decoding, top-k/top-p, int8 weights, optional Triton RMSNorm | |
+
+Model: decoder-only transformer with RoPE, RMSNorm, SwiGLU, tied embeddings, PyTorch SDPA (FlashAttention kernels).
+Presets: `nano` ~1M, `micro` ~12M, `small` ~28M, `base` ~100M.
+
+## Fine-tune a pretrained model (LoRA / QLoRA)
+
+The most useful thing a small GPU can do. Default: `SmolLM2-360M-Instruct` on an instruction dataset.
+
+```bash
+pip install -e ".[finetune]"
+tinyforge ft pipeline --steps 150          # doctor -> data -> plan -> train -> eval + merge
+tinyforge ft generate "Explain hash tables" # tuned model;  add --base to compare with the original
+```
+
+| Stage | What it does | Guard rails |
+|---|---|---|
+| `ft data` | JSONL or HF dataset -> chat JSONL; dedupe; hash split keyed on prompt (no leakage); length stats | FD001-FD006: too few examples, duplicates, malformed, tiny val set, truncation, PII/credentials (credentials are dropped) |
+| `ft plan` | picks fp16 vs 4-bit NF4, checkpointing, and a **token budget** per micro-batch to fit VRAM | FP001-FP007 |
+| `ft train` | LoRA, length-grouped token-budget batching, resume, best-adapter tracking | FT001 NaN, FT002 overfit, FT005 VRAM spill, FT006 adaptive OOM recovery |
+| `ft eval` | tuned vs base held-out loss, forgetting check on general text, side-by-side generations, merge + equivalence check | FE001-FE009; exit 1 if tuned is not better than base |
+
+Measured on an RTX 3050 Ti Laptop (4 GB), SmolLM2-360M, 150 steps x 16 examples: 2.4 GB peak VRAM, ~830 tok/s,
+~10 min, held-out loss 1.314 -> 1.262 (-4.0%), no forgetting; exports a 690 MB standalone merged model.
+Lessons baked into the planner (all measured, see `finetune.plan`): small micro-batches are launch-bound (bs8 is
+2.3x the tokens/s of bs4), LoRA dropout 0 is ~40% faster, and allocator-level estimates miss cuBLAS workspace, so
+training recovers from memory errors by shrinking the token budget instead of crashing.
+
+## Layout
+
+```
+src/tinyforge/   engine (config, data, model, train, evaluate, infer, kernels/), cli.py, server.py, ui/
+tests/           unit + end-to-end smoke (synthetic data, no network)
+infra/terraform/ S3 artifacts, IAM, no-inbound GPU spot worker (SSM access), budget alarm
+.github/         CI: lint, test matrix, terraform validate, docker build, self-hosted GPU e2e
+Dockerfile       CUDA runtime image
+```
+
+## Cloud (AWS)
+
+```bash
+cd infra/terraform
+terraform init -backend-config="bucket=<state-bucket>" -backend-config="key=tinyforge/tf.tfstate"
+terraform apply -var enable_gpu_worker=true -var alert_email=you@example.com
+# then run the `connect` output command to port-forward the UI over SSM (no open ports)
+```
+
+## Honest limits / roadmap
+
+- **JAX**: there is a probe and a backend slot, but training is PyTorch-only today. JAX has no native Windows GPU
+  support (use WSL2/Linux), and a second backend should be added behind the same `train()` interface.
+- **Triton**: one fused kernel (RMSNorm forward, inference only). Next: fused SwiGLU, then a backward pass.
+  Triton on Windows needs the `triton-windows` package.
+- From-scratch models are for learning/prototyping; use fine-tuning for anything useful. A 4% held-out gain on
+  a general instruction set is modest by design: LoRA on a small, already-tuned model mostly shifts style. Use a
+  task-specific dataset to see larger gains.
+- 4-bit QLoRA is verified on real hardware (see ROADMAP.md): it works but ends ~4.7% worse in loss than fp16 on a
+  model that fits in fp16. Its value is fitting larger models; that case is not yet tested.
+- Generation speed (HF `generate`, eager) is ~10 tok/s on this GPU; the merged model is the thing to export to
+  llama.cpp/vLLM for serving.
+- Single-GPU, single-job. Multi-GPU (FSDP) and a job queue come after the single-node path is solid.
+- The web UI has no auth: bind to localhost (default) or put it behind SSM/VPN/reverse proxy.

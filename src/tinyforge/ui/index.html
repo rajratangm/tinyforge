@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tinyforge</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--fg:#e6e8ee;--mut:#8b93a7;--ac:#6ea8fe;--ok:#4ade80;--warn:#fbbf24;--err:#f87171}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--line:#e2e5ec;--fg:#14171f;--mut:#5b6377;--ac:#2563eb;--ok:#15803d;--warn:#b45309;--err:#b91c1c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+header{padding:16px 24px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline}
+h1{font-size:18px;margin:0}main{display:grid;gap:16px;padding:16px 24px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px}
+.wide{grid-column:1/-1}label{display:block;color:var(--mut);font-size:12px;margin-top:8px}
+input,select,textarea,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:100%}
+button{background:var(--ac);color:#fff;border:0;cursor:pointer;margin-top:12px;font-weight:600}button:disabled{opacity:.5;cursor:default}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse}td{padding:3px 0;border-bottom:1px solid var(--line)}td:first-child{color:var(--mut)}
+.diag{padding:6px 10px;border-left:3px solid;margin:6px 0;background:var(--bg);border-radius:0 6px 6px 0;font-size:13px}
+.diag.info{border-color:var(--ac)}.diag.warn{border-color:var(--warn)}.diag.error{border-color:var(--err)}
+.diag small{display:block;color:var(--mut)}.diag b{font-family:ui-monospace,monospace;font-size:11px}
+pre{margin:0;max-height:220px;overflow:auto;font:12px ui-monospace,monospace;color:var(--mut);white-space:pre-wrap}
+canvas{width:100%;height:200px}.row{display:flex;gap:8px}.row>*{flex:1}
+.badge{padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}.pass{background:#14532d;color:#bbf7d0}.fail{background:#7f1d1d;color:#fecaca}
+.out{white-space:pre-wrap;margin-top:12px;padding:10px;background:var(--bg);border-radius:6px;min-height:60px}
+</style>
+</head>
+<body>
+<header><h1>tinyforge</h1><span style="color:var(--mut)">train, evaluate and serve small LLMs on modest GPUs</span></header>
+<main>
+  <section class="card"><h2>Hardware</h2><table id="hw"></table><div id="hwdiag"></div></section>
+
+  <section class="card"><h2>Train</h2>
+    <label>Mode</label>
+    <select id="mode"><option value="ft" selected>Fine-tune a pretrained model (LoRA)</option><option value="scratch">Train a tiny model from scratch</option></select>
+    <div id="ftbox">
+      <label>Base model (Hugging Face id)</label><input id="base" value="HuggingFaceTB/SmolLM2-360M-Instruct">
+      <div class="row"><div><label>Steps</label><input id="ftsteps" type="number" value="150" min="1"></div>
+      <div><label>Examples</label><input id="limit" type="number" value="3000" min="100"></div></div>
+    </div>
+    <div id="scbox" style="display:none">
+      <label>Model size</label>
+      <select id="preset"><option value="nano">nano (~1M, CPU ok)</option><option value="micro" selected>micro (~12M, 4 GB GPU)</option><option value="small">small (~28M, 6+ GB)</option></select>
+      <div class="row"><div><label>Steps</label><input id="steps" type="number" value="2000" min="1"></div>
+      <div><label>Context</label><input id="block" type="number" value="256" min="16"></div></div>
+    </div>
+    <button id="go">Run pipeline: data → train → evaluate</button>
+    <button id="stop" class="sec" disabled>Cancel</button>
+    <div id="status" style="margin-top:8px;color:var(--mut)"></div>
+  </section>
+
+  <section class="card wide"><h2>Live training</h2><canvas id="chart" width="1200" height="200"></canvas><div id="live" style="color:var(--mut)"></div><div id="traindiag"></div></section>
+
+  <section class="card"><h2>Evaluation</h2><div id="eval" style="color:var(--mut)">No evaluation yet.</div></section>
+
+  <section class="card"><h2>Playground</h2>
+    <label>Model</label><select id="run"></select>
+    <label>Prompt</label><textarea id="prompt" rows="2">Explain what a hash table is in two sentences.</textarea>
+    <div class="row" id="scopts"><div><label>Temperature</label><input id="temp" type="number" value="0.8" step="0.1" min="0" max="2"></div>
+    <div><label>int8</label><select id="int8"><option value="false">off</option><option value="true">on (less VRAM)</option></select></div></div>
+    <div id="ftopts"><label>Compare</label><select id="which"><option value="false">Fine-tuned model</option><option value="true">Original base model</option></select></div>
+    <button id="gen">Generate</button><div class="out" id="out"></div>
+  </section>
+
+  <section class="card wide"><h2>Log</h2><pre id="log"></pre></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const diagHtml=d=>`<div class="diag ${esc(d.level)}"><b>${esc(d.code)}</b> ${esc(d.message)}${d.fix?`<small>Fix: ${esc(d.fix)}</small>`:''}</div>`;
+let jobId=null, pts=[], vals=[], seen=new Set();
+
+const getTok=()=>{try{return sessionStorage.getItem('tf_token')||''}catch{return ''}};
+const authH=()=>getTok()?{authorization:'Bearer '+getTok()}:{};
+async function api(path,opt={}){
+  const go=()=>fetch(path,{...opt,headers:{...(opt.headers||{}),...authH()}});
+  let r=await go();
+  if(r.status===401){const t=prompt('API token (the server\'s TINYFORGE_API_TOKEN):');if(t){try{sessionStorage.setItem('tf_token',t)}catch{}r=await go()}}
+  if(!r.ok){throw new Error((await r.json().catch(()=>({}))).detail||r.statusText)}return r.json()}
+// EventSource cannot send an Authorization header, so follow the SSE stream with fetch (keeps the token out of URLs/logs)
+async function follow(id,onMsg,onEnd){
+  const r=await fetch(`/api/jobs/${id}/events`,{headers:authH()});
+  if(!r.ok||!r.body)throw new Error((await r.json().catch(()=>({}))).detail||r.statusText);
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+    let k;while((k=buf.indexOf('\n\n'))>=0){const blk=buf.slice(0,k);buf=buf.slice(k+2);
+      let ev='message',data='';for(const l of blk.split('\n')){if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))data+=l.slice(6)}
+      if(ev==='end')return onEnd(data);onMsg(JSON.parse(data))}}
+  onEnd('disconnected')}
+
+async function loadHw(){
+  const {hardware:h,diagnostics}=await api('/api/hardware');
+  $('hw').innerHTML=Object.entries(h).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+  $('hwdiag').innerHTML=diagnostics.map(diagHtml).join('');
+}
+async function loadRuns(){
+  const runs=await api('/api/runs');
+  window.runKinds=Object.fromEntries(runs.map(r=>[r.name,r.kind]));
+  $('run').innerHTML=runs.filter(r=>r.has_model).map(r=>`<option value="${esc(r.name)}">${esc(r.name)} (${r.kind==='finetune'?'fine-tuned':'scratch'})</option>`).join('')||'<option value="" disabled>no trained models</option>';
+  syncPlayground();
+  const e=runs.find(r=>r.eval)?.eval; if(e) showEval(e);
+}
+function syncPlayground(){const ft=window.runKinds?.[$('run').value]==='finetune';$('ftopts').style.display=ft?'':'none';$('scopts').style.display=ft?'none':''}
+function showEval(e){
+  if(e.val_loss_tuned!==undefined) return showFtEval(e);
+  const rows=[['val loss',e.val_loss],['perplexity',e.val_ppl],['distinct-2',e.distinct_2],['copy rate (8-gram)',e.copy_rate_8gram],['KV-cache error',e.kv_cache_max_err],['decode tok/s',e.decode_tok_per_s],['inference VRAM GB',e.inference_peak_mem_gb]];
+  $('eval').innerHTML=`<span class="badge ${e.passed?'pass':'fail'}">${e.passed?'PASSED':'FAILED'}</span><table style="margin-top:8px">`+rows.map(([k,v])=>`<tr><td>${k}</td><td>${(+v).toFixed(4)}</td></tr>`).join('')+'</table>'+e.diagnostics.map(diagHtml).join('');
+}
+function showFtEval(e){
+  const sign=v=>(v>0?'+':'')+v.toFixed(1)+'%';
+  const rows=[['val loss: base → tuned',`${e.val_loss_base.toFixed(3)} → ${e.val_loss_tuned.toFixed(3)} (${sign(-e.improvement_pct)})`],
+    ['perplexity: base → tuned',`${e.val_ppl_base.toFixed(2)} → ${e.val_ppl_tuned.toFixed(2)}`],
+    ['general-text loss drift (forgetting)',sign(e.forgetting_pct)],['distinct-2',e.distinct_2.toFixed(2)],
+    ['decode tok/s',e.decode_tok_per_s.toFixed(1)],['inference VRAM GB',e.inference_peak_mem_gb.toFixed(2)],
+    ['merge logit error',e.merge_max_logit_err===undefined?'skipped':e.merge_max_logit_err.toFixed(3)]];
+  const s=e.samples[0];
+  $('eval').innerHTML=`<span class="badge ${e.passed?'pass':'fail'}">${e.passed?'PASSED':'FAILED'}</span><table style="margin-top:8px">`+rows.map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')+'</table>'+e.diagnostics.map(diagHtml).join('')+
+    `<h2 style="margin-top:14px">Sample: ${esc(s.prompt)}</h2><div class="diag info"><small>base</small>${esc(s.base)}</div><div class="diag info"><small>tuned</small>${esc(s.tuned)}</div>`;
+}
+function draw(){
+  const c=$('chart'),x=c.getContext('2d');x.clearRect(0,0,c.width,c.height);
+  const all=pts.concat(vals);if(!all.length)return;
+  const maxS=Math.max(...all.map(p=>p[0])),lo=Math.min(...all.map(p=>p[1])),hi=Math.max(...all.map(p=>p[1]));
+  const X=s=>30+s/maxS*(c.width-40),Y=l=>c.height-20-(l-lo)/(hi-lo||1)*(c.height-40);
+  const css=getComputedStyle(document.body);
+  const line=(a,col)=>{x.strokeStyle=col;x.lineWidth=2;x.beginPath();a.forEach((p,i)=>i?x.lineTo(X(p[0]),Y(p[1])):x.moveTo(X(p[0]),Y(p[1])));x.stroke()};
+  line(pts,css.getPropertyValue('--ac'));line(vals,css.getPropertyValue('--ok'));
+  x.fillStyle=css.getPropertyValue('--mut');x.font='12px system-ui';x.fillText(hi.toFixed(2),0,14);x.fillText(lo.toFixed(2),0,c.height-6);
+  x.fillText('train loss (blue)  val loss (green)',c.width-230,14);
+}
+function onLine(line){
+  $('log').textContent+=line+'\n';$('log').scrollTop=1e9;
+  let e;try{e=JSON.parse(line)}catch{return}
+  if(e.event==='step'){pts.push([e.step,e.loss]);$('live').textContent=`step ${e.step} · loss ${e.loss.toFixed(3)} · ${Math.round(e.tok_per_s).toLocaleString()} tok/s · peak ${e.peak_mem_gb.toFixed(2)} GB`;draw()}
+  else if(e.event==='eval'){vals.push([e.step,e.val_loss]);draw()}
+  else if(e.event==='diagnostic'){const k=e.code+e.message;if(!seen.has(k)){seen.add(k);$('traindiag').insertAdjacentHTML('beforeend',diagHtml(e))}}
+  else if(e.passed!==undefined){showEval(e)}
+}
+$('go').onclick=async()=>{
+  pts=[];vals=[];seen.clear();$('log').textContent='';$('traindiag').innerHTML='';
+  const ft=$('mode').value==='ft';
+  try{const r=await api(ft?'/api/jobs/finetune':'/api/jobs/pipeline',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(ft?{base_model:$('base').value,steps:+$('ftsteps').value,limit:+$('limit').value}:{preset:$('preset').value,steps:+$('steps').value,block_size:+$('block').value})});
+  jobId=r.id;$('go').disabled=true;$('stop').disabled=false;$('status').textContent='queued…';
+  await follow(jobId,m=>{$('status').textContent='running…';onLine(m)},s=>{$('status').textContent=s;$('go').disabled=false;$('stop').disabled=true;loadRuns()});
+  }catch(err){$('status').textContent=err.message;$('go').disabled=false;$('stop').disabled=true}
+};
+$('stop').onclick=()=>api(`/api/jobs/${jobId}/cancel`,{method:'POST'});
+$('gen').onclick=async()=>{
+  $('out').textContent='…';
+  const ft=window.runKinds?.[$('run').value]==='finetune';
+  const body=ft?{prompt:$('prompt').value,base:$('which').value==='true'}:{prompt:$('prompt').value,run:$('run').value,temperature:+$('temp').value,int8:$('int8').value==='true'};
+  try{const r=await api(ft?'/api/ft/generate':'/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});$('out').textContent=r.text}
+  catch(err){$('out').textContent=err.message}
+};
+$('run').onchange=syncPlayground;
+$('mode').onchange=()=>{const ft=$('mode').value==='ft';$('ftbox').style.display=ft?'':'none';$('scbox').style.display=ft?'none':''};
+loadHw();loadRuns();
+</script>
+</body>
+</html>
