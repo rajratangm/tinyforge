@@ -19,3 +19,4 @@ tools/bin/
 .env
 
 *.bak
+agent-state/
