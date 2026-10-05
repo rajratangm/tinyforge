@@ -1,0 +1,11 @@
+# Must be REJECTED: method is not one of lora | qlora | full.
+apiVersion: tinyforge.dev/v1alpha1
+kind: TrainingJob
+metadata:
+  name: bad-method
+spec:
+  method: lora2
+  model:
+    base: HuggingFaceTB/SmolLM2-360M
+  data:
+    source: b-mc2/sql-create-context

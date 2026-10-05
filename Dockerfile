@@ -9,7 +9,8 @@ FROM ${UV_IMAGE} AS uv
 # ---------------------------------------------------------------- builder: toolchain + deps, never shipped
 FROM ${CUDA_BASE} AS builder
 COPY --from=uv /uv /usr/local/bin/uv
-ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1
+ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1 \
+    UV_HTTP_TIMEOUT=900 UV_CONCURRENT_DOWNLOADS=4
 RUN uv python install 3.12 && uv venv /opt/venv --python 3.12
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
 RUN uv pip install torch --index-url https://download.pytorch.org/whl/cu124
@@ -31,9 +32,14 @@ COPY --from=builder /opt/venv /opt/venv
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin forge \
     && mkdir -p /app/runs /app/data /app/.cache && chown -R 10001:10001 /app
 WORKDIR /app
+# The worker validates TrainingJob specs against this schema (not packaged in the wheel).
+COPY spec/jobspec.v1alpha1.schema.json /app/spec/jobspec.v1alpha1.schema.json
+ENV TINYFORGE_JOBSPEC_SCHEMA=/app/spec/jobspec.v1alpha1.schema.json
 USER 10001
 EXPOSE 8000
+# `serve --host 0.0.0.0` refuses to start without TLS (--ssl-certfile/--ssl-keyfile) and TINYFORGE_API_TOKEN, unless
+# --insecure-http is given deliberately (e.g. TLS terminated by an ingress). The probe works for either mode (loopback only).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+    CMD python -c "import ssl,urllib.request as u;c=ssl._create_unverified_context();exec('try:\n u.urlopen(\"http://127.0.0.1:8000/healthz\",timeout=4)\nexcept Exception:\n u.urlopen(\"https://127.0.0.1:8000/healthz\",timeout=4,context=c)')"
 ENTRYPOINT ["tinyforge"]
 CMD ["serve", "--host", "0.0.0.0"]

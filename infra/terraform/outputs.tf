@@ -13,3 +13,13 @@ output "connect" {
     null
   )
 }
+
+output "kms_key_arn" {
+  description = "Customer-managed key ARN, or null when the AWS-managed keys are used."
+  value       = local.cmk_arn
+}
+
+output "cloudtrail_bucket" {
+  description = "CloudTrail log bucket, or null when enable_cloudtrail is false."
+  value       = try(aws_s3_bucket.trail[0].bucket, null)
+}

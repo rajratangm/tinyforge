@@ -1,0 +1,38 @@
+# Example checks file for `forgectl net check -f`. See the package comment in spec.go for every field.
+# Each target is one explicit host:port, URL or hostname. CIDR ranges, port ranges and wildcards are rejected.
+apiVersion: tinyforge.dev/v1alpha1
+kind: NetCheck
+checks:
+  # The cluster DNS answers, and the service name resolves inside the service CIDR.
+  - id: dns-api
+    kind: dns
+    target: tinyforge-api.tinyforge.svc.cluster.local
+    expectCIDR: 10.96.0.0/12
+
+  # The API is listening.
+  - id: api-tcp
+    kind: tcp
+    target: "tinyforge-api.tinyforge.svc.cluster.local:8000"
+
+  # The API presents a valid certificate (warn if it expires within 21 days). Add `caFile: ca.pem` to trust a private CA.
+  - id: api-tls
+    kind: tls
+    target: "tinyforge-api.tinyforge.svc.cluster.local:8000"
+    minTLSVersion: "1.3"
+    warnExpiryDays: 21
+
+  # The model hub is reachable over HTTPS; a redirect to another host is reported, not followed.
+  - id: model-hub
+    kind: http
+    target: https://huggingface.co/
+    expectStatus: 200
+    severity: warn
+
+  # Egress leak tests: these destinations must NOT be reachable from here.
+  - id: no-egress-dns-google
+    kind: egress-deny
+    target: "8.8.8.8:53"
+  - id: no-egress-metadata
+    kind: egress-deny
+    target: "169.254.169.254:80"
+    timeout: 2s

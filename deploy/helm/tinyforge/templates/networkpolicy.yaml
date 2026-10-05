@@ -1,0 +1,100 @@
+{{- /*
+Network policy helpers (defines are global, so networkpolicy-*.yaml reuse them) and the CONTROLLER policy.
+Rule of thumb enforced here: an empty allow-list renders NO rule. A NetworkPolicy rule with ports but no from/to means
+"any peer", so an unset value must never turn into an open rule.
+*/ -}}
+
+{{- /* One egress rule item: DNS to the cluster resolver. Context: .Values.networkPolicy.dns */ -}}
+{{- define "tinyforge.np.dns" -}}
+- to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .namespace | quote }}
+      podSelector:
+        matchLabels:
+          {{- toYaml .podLabels | nindent 10 }}
+  ports:
+    - { protocol: UDP, port: 53 }
+    - { protocol: TCP, port: 53 }
+{{- end -}}
+
+{{- /* One egress rule item to a CIDR allow-list; renders NOTHING when cidrs is empty. Context: { cidrs, ports } */ -}}
+{{- define "tinyforge.np.toCidrs" -}}
+{{- if .cidrs }}
+- to:
+    {{- range .cidrs }}
+    - ipBlock:
+        cidr: {{ . | quote }}
+    {{- end }}
+  ports:
+    {{- range .ports }}
+    - { protocol: TCP, port: {{ . }} }
+    {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- /* One ingress rule item from a peer list on one TCP port; renders NOTHING when from is empty. Context: { from, port } */ -}}
+{{- define "tinyforge.np.fromPeers" -}}
+{{- if .from }}
+- from:
+    {{- toYaml .from | nindent 4 }}
+  ports:
+    - { protocol: TCP, port: {{ .port }} }
+{{- end }}
+{{- end -}}
+
+{{- define "tinyforge.np.controllerEgress" -}}
+{{- $np := .Values.networkPolicy -}}
+{{ include "tinyforge.np.dns" $np.dns }}
+{{- with (include "tinyforge.np.toCidrs" $np.controller.egress.apiServer | trim) }}
+{{ . }}
+{{- end }}
+{{- with $np.controller.egress.extra }}
+{{ toYaml . }}
+{{- end }}
+{{- with $np.extraEgress }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "tinyforge.np.controllerIngress" -}}
+{{- $np := .Values.networkPolicy -}}
+{{- if $np.controller.metrics.enabled }}
+{{- if not $np.controller.metrics.from }}
+{{- fail "networkPolicy.controller.metrics.enabled=true needs networkPolicy.controller.metrics.from (the scraper's namespace/pod selector); refusing to open the port to every peer" }}
+{{- end }}
+{{ include "tinyforge.np.fromPeers" (dict "from" $np.controller.metrics.from "port" $np.controller.metrics.port) | trim }}
+{{- end }}
+{{- with $np.controller.ingress.extra }}
+{{ toYaml . }}
+{{- end }}
+{{- with $np.extraIngress }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- if .Values.networkPolicy.enabled }}
+# Controller: default-deny in both directions, then only what the values allow. The API server address is cluster
+# specific and has no safe default: set networkPolicy.controller.egress.apiServer.cidrs or the controller cannot start.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tinyforge.fullname" . }}-controller-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tinyforge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tinyforge.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  {{- $ingress := include "tinyforge.np.controllerIngress" . | trim }}
+  {{- if $ingress }}
+  ingress:
+    {{- $ingress | nindent 4 }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    {{- include "tinyforge.np.controllerEgress" . | trim | nindent 4 }}
+{{- end }}

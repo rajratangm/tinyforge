@@ -244,3 +244,77 @@ PHASES: 0 baseline (git, safe load, Docker, CI) -> 1 JobSpec + agent + forgectl 
 - [L / O] Reliability: Meta cluster study 2410.21680 (failure taxonomy, MTTF model), Llama 3 infra reliability (DSN-S 2025,
   419 interruptions/54 days), 504-GPU ops analysis 2605.09370 (failure precursors, checkpoint I/O), LLM-PRISM 2604.10390
   (silent data corruption; relevant to checkpoint safety).
+
+## Q. DEPTH PLAN: international-standard engineering (user, 2026-10-05: go DEEPER, not wider)
+Rule: no new product areas until the existing ones meet the Definition of Done below. Tool names are from memory, NOT yet
+verified for current versions/licences/fit: check each before adopting, and prefer boring, widely used, permissively licensed tools.
+
+DEFINITION OF DONE (every feature, before it counts as done): tests (unit + failure-path, mutation-checked where cheap) -> docs
+(how to use + what is NOT covered) -> metrics/log events -> threat-model note -> runbook entry for its failure modes -> works on
+Linux (not just this Windows box) -> CI green -> an ADR if it changed a design decision.
+
+### Q1. Supply chain and security (P0: cheap, high trust signal)
+- Signing + provenance: Sigstore cosign (sign images/binaries/model artifacts), SLSA build provenance (slsa-github-generator),
+  SBOM via syft (SPDX + CycloneDX), verify at admission with Kyverno/policy-controller. OpenSSF model-signing for model files.
+- Scanning: Trivy or Grype (images), pip-audit + osv-scanner (Python), govulncheck (Go), gitleaks (secrets, also as pre-commit),
+  Checkov/tfsec/tflint-aws (Terraform), kubeconform + kube-linter or Polaris (manifests), Semgrep + CodeQL + Bandit (SAST).
+- Hygiene: pin GitHub Actions by commit SHA, Dependabot or Renovate, OpenSSF Scorecard + Best Practices badge, SECURITY.md
+  (disclosure policy), CODEOWNERS, branch protection + required checks, signed commits, least-privilege GITHUB_TOKEN, OIDC to cloud.
+- Reproducible builds: locked deps (uv lock with torch+CUDA resolved TOGETHER; see the lockfile follow-up), digest-pinned bases (done).
+- Threat model: STRIDE doc per component; OWASP ASVS (API), OWASP Top 10 for LLM Apps, MITRE ATLAS (ML-specific attacks).
+
+### Q2. Code quality and testing
+- Python: uv, ruff (have), mypy or pyright in strict mode on src/, pytest-cov with a coverage gate, hypothesis (property tests for
+  config/spec parsing, data pipeline, exit-code mapping), mutmut (mutation testing on the safety-critical modules), nox for matrix
+  runs, pydantic-settings (12-factor config), structlog (JSON logs), safetensors everywhere, Alembic + SQLAlchemy when SQLite -> Postgres.
+- Go: golangci-lint, `go test -race` (needs Linux/cgo CI), native fuzzing (`go test -fuzz`) for jobspec/netcheck/agent parsers,
+  slog, goreleaser (cross-platform signed releases), controller-runtime + kubebuilder + envtest for the operator.
+- Kubernetes/e2e: kind (have) / k3d, Kyverno Chainsaw or Ginkgo for operator e2e, helm-unittest, Testcontainers.
+- Resilience: Toxiproxy + Chaos Mesh/LitmusChaos (kill node, drop NIC, fill disk, throttle GPU via power cap), k6 or Locust
+  (API + serving load), Playwright (UI, never browser-tested yet), golden-file tests for CLI output, fault-injection fixtures for doctor.
+- Pre-commit hooks (ruff, gofmt, gitleaks, actionlint, yamllint, hadolint for Dockerfiles, shellcheck).
+
+### Q3. Observability and operations (SRE practice)
+- OpenTelemetry (SDKs + Collector) for traces/metrics/logs across API -> agent -> worker; Prometheus (have) + Alertmanager,
+  Grafana (have) + Loki (logs) + Tempo (traces); node_exporter, DCGM exporter on Linux (richer than nvidia_gpu_exporter),
+  Node Problem Detector, SLOs as code with Sloth or Pyrra, error budgets, runbooks, blameless postmortem template, DORA metrics.
+- Standards: Twelve-Factor, Google SRE workbook practices, CNCF Cloud Native Security whitepaper, CIS Benchmarks (Docker, Kubernetes
+  via kube-bench), Pod Security Admission "restricted".
+
+### Q4. Kubernetes and GPU platform (use existing building blocks, do not rebuild)
+- Scheduling: Kueue (quotas, fair share, preemption) and/or Volcano (gang scheduling); JobSet (multi-pod jobs); Kubeflow Training
+  Operator (PyTorchJob) as a possible backend the operator creates; Ray/KubeRay only if a customer needs it.
+- Node/GPU: NVIDIA GPU Operator, device plugin, DCGM, MIG, Node Feature Discovery, NVIDIA Network Operator (RoCE/IB), nccl-tests
+  + `dcgmi diag` for preflight; Karpenter for cloud GPU nodes.
+- Cluster services: cert-manager (mTLS certs), External Secrets, Cilium + Hubble (NetworkPolicy enforcement + FQDN egress +
+  flow visibility; plain NetworkPolicy needs an enforcing CNI), Kyverno or Gatekeeper (signed images only, no :latest, no privileged),
+  Argo CD (GitOps), Kustomize + Helm (have), Velero (backup).
+
+### Q5. ML correctness, evals and governance (the moat)
+- Evals: lm-evaluation-harness, Inspect AI, promptfoo or DeepEval; execution-accuracy harness for SQL (BIRD/Spider style) per the
+  research list; fixed seeds + confidence intervals + paired tests so claims carry error bars; hold-out contamination checks.
+- Tracking/data: MLflow (runs/registry) or W&B-compatible export, DVC or lakeFS (data versioning), OpenLineage (lineage events),
+  Hugging Face Hub with pinned revisions, model cards (HF standard) generated from eval results, SPDX 3.0 AI profile / CycloneDX
+  ML-BOM for AI bills of materials, license checks (ScanCode/ORT) for base models + datasets.
+- Safety: Llama Guard or NeMo Guardrails (serving edge), Presidio (PII detection in datasets), garak / PyRIT (red-team scans).
+- Frameworks to map controls to: NIST AI RMF, ISO/IEC 42001, EU AI Act (risk tiers, documentation), ISO 27001 / SOC 2 (control
+  evidence from audit logs + CI), NIST SSDF (secure development).
+
+### Q6. Training and serving depth (wrap, validate, publish numbers)
+- Training: PyTorch FSDP2 + DCP async sharded checkpoints, TorchTitan, DeepSpeed, Accelerate, TRL, Liger-Kernel, torchao
+  (quantization), WebDataset or MosaicML Streaming (dataset sharding), nccl-tests (fabric validation).
+- Serving: vLLM (continuous batching, prefix cache, multi-LoRA), SGLang, TensorRT-LLM, llama.cpp (have), GenAI-Perf / vLLM
+  benchmark scripts under concurrent load (1/8/32 clients).
+- Benchmark methodology: follow MLPerf-style reproducibility (fixed workloads, warmup excluded, variance reported, hardware and
+  software versions recorded, fair baselines); publish negative results; no claim without the raw JSON committed.
+
+### Q7. Project and community standards
+- Licence (Apache-2.0 likely), CONTRIBUTING, CODE_OF_CONDUCT, issue/PR templates, DCO sign-off, SemVer + Keep a Changelog +
+  Conventional Commits (drives release notes), ADRs in docs/adr/, C4 diagrams (Mermaid), Diataxis-structured docs site (MkDocs
+  Material or Docusaurus), OpenAPI 3.1 + contract tests for the API, versioned JobSpec with a deprecation policy,
+  RFC 2119 wording in spec/ documents, public roadmap, release checklist, support matrix (OS, driver, CUDA, k8s versions).
+
+### Q8. Deliberately NOT now (scope guard)
+JAX backend, extra Triton kernels, Tauri desktop shell, own trainer/scheduler/inference engine, ROCm/Apple backends, a
+marketplace. Revisit only when a design partner asks. Priority inside Q: Q1 + Q2 first (cheap, immediately credible), then Q3
+(needed to run anything), then Q4/Q5/Q6 as the controller, serving and multi-node work lands.

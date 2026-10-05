@@ -1,0 +1,37 @@
+# Every network option turned on, with documentation-range addresses (RFC 5737 / 1918). Used only by verify.sh.
+networkPolicy:
+  enabled: true
+  controller:
+    metrics:
+      enabled: true
+      port: 8080
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+    egress:
+      apiServer: { cidrs: ["10.96.0.1/32"], ports: [443, 6443] }
+  api:
+    enabled: true
+    ingressFrom:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    metricsFrom:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+    egress:
+      modelHub: { cidrs: ["203.0.113.0/24"], ports: [443] }
+  agent:
+    enabled: true
+    ingressFrom:
+      - podSelector: { matchLabels: { app.kubernetes.io/component: controller } }
+  worker:
+    enabled: true
+    collective: { enabled: true, portRange: { port: 29400, endPort: 29999 } }
+    egress:
+      modelHub: { cidrs: ["203.0.113.0/24"], ports: [443] }
+      registry: { cidrs: ["198.51.100.0/24"], ports: [443] }
+      storage: { cidrs: ["192.0.2.0/24"], ports: [443, 2049] }
+  cilium:
+    enabled: true
+    components: [worker, api]
+    fqdns:
+      matchNames: [huggingface.co]
+      matchPatterns: ["*.s3.amazonaws.com"]

@@ -32,18 +32,18 @@ func TestMinimalSpecGetsDefaults(t *testing.T) {
 
 func TestInvalidSpecsRejected(t *testing.T) {
 	cases := map[string]string{
-		"bad method":         strings.Replace(minimal, "method: lora", "method: lora2", 1),
-		"unknown field":      strings.Replace(minimal, "data: {source: org/data}", "data: {source: org/data, bogus: 1}", 1),
-		"bad name":           strings.Replace(minimal, "name: t1", "name: Bad_Name", 1),
-		"trustRemoteCode":    strings.Replace(minimal, "model: {base: org/model}", "model: {base: org/model, trustRemoteCode: true}", 1),
-		"wrong apiVersion":   strings.Replace(minimal, "v1alpha1", "v9", 1),
-		"missing data":       strings.Replace(minimal, "  data: {source: org/data}\n", "", 1),
-		"zero steps":         minimal + "  hyperparameters: {maxSteps: 0}\n",
-		"negative gpus":      minimal + "  resources: {gpus: -1}\n",
-		"gate bad operator":  minimal + "  gates: [{metric: val_loss, op: '!=', value: 1}]\n",
-		"duplicate export":   minimal + "  export: [adapter, adapter]\n",
-		"not yaml":           "::: not yaml :::",
-		"empty":              "",
+		"bad method":        strings.Replace(minimal, "method: lora", "method: lora2", 1),
+		"unknown field":     strings.Replace(minimal, "data: {source: org/data}", "data: {source: org/data, bogus: 1}", 1),
+		"bad name":          strings.Replace(minimal, "name: t1", "name: Bad_Name", 1),
+		"trustRemoteCode":   strings.Replace(minimal, "model: {base: org/model}", "model: {base: org/model, trustRemoteCode: true}", 1),
+		"wrong apiVersion":  strings.Replace(minimal, "v1alpha1", "v9", 1),
+		"missing data":      strings.Replace(minimal, "  data: {source: org/data}\n", "", 1),
+		"zero steps":        minimal + "  hyperparameters: {maxSteps: 0}\n",
+		"negative gpus":     minimal + "  resources: {gpus: -1}\n",
+		"gate bad operator": minimal + "  gates: [{metric: val_loss, op: '!=', value: 1}]\n",
+		"duplicate export":  minimal + "  export: [adapter, adapter]\n",
+		"not yaml":          "::: not yaml :::",
+		"empty":             "",
 	}
 	for name, doc := range cases {
 		if _, err := Parse([]byte(doc)); err == nil {

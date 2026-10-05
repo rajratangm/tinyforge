@@ -1,0 +1,13 @@
+# Must be REJECTED by `kubectl apply` (strict field validation): bogusField is not in the schema.
+# Without strict validation the API server would silently prune it, which is why this is checked explicitly.
+apiVersion: tinyforge.dev/v1alpha1
+kind: TrainingJob
+metadata:
+  name: bad-field
+spec:
+  method: lora
+  model:
+    base: HuggingFaceTB/SmolLM2-360M
+  data:
+    source: b-mc2/sql-create-context
+    bogusField: 1

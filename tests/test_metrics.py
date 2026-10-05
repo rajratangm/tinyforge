@@ -25,7 +25,7 @@ def _unescape(v: str) -> str:
 
 
 def parse(text: str) -> tuple[dict[str, str], list[tuple[str, dict[str, str], float]]]:
-    """Return ({family: type}, [(sample_name, labels, value)]); assert the structural rules of format 0.0.4."""
+    """Return ({family: type}, [(sample_name, labels, value)]); assert the structure rules of format 0.0.4."""
     assert text.endswith("\n") and not text.endswith("\n\n")
     helped: set[str] = set()
     types: dict[str, str] = {}
@@ -106,28 +106,33 @@ def test_status_counts_and_duration_histogram():
     assert value(samples, "tinyforge_job_duration_seconds_sum", status="done") == 105.0
     assert value(samples, "tinyforge_job_duration_seconds_count", status="failed") == 1
     # cancelled/interrupted must not leak into the duration histogram
-    assert {ls["status"] for n, ls, _ in samples if n.startswith("tinyforge_job_duration")} == {"done", "failed"}
+    seen = {ls["status"] for n, ls, _ in samples if n.startswith("tinyforge_job_duration")}
+    assert seen == {"done", "failed"}
 
 
 def test_bucket_counts_are_cumulative():
     jobs = [job("done", 0.0, d) for d in (1, 20, 20, 500, 100000)]
     _, samples = parse(render("v", jobs))
-    counts = [v for n, ls, v in samples if n == "tinyforge_job_duration_seconds_bucket" and ls["status"] == "done"]
+    counts = [v for n, ls, v in samples
+              if n == "tinyforge_job_duration_seconds_bucket" and ls["status"] == "done"]
     assert counts == sorted(counts) and counts[-1] == 5
 
 
 # ---------------------------------------------------------------- training signals
 
 def test_latest_step_and_eval_win_and_noise_is_ignored():
-    log = ["starting up", step(5, loss=3.0), "not json {", json.dumps({"event": "eval", "step": 0, "val_loss": 9.0}),
-           step(10, loss=2.5, tok=1000.0), json.dumps({"event": "eval", "step": 10, "val_loss": 2.2}),
+    log = ["starting up", step(5, loss=3.0), "not json {",
+           json.dumps({"event": "eval", "step": 0, "val_loss": 9.0}),
+           step(10, loss=2.5, tok=1000.0),
+           json.dumps({"event": "eval", "step": 10, "val_loss": 2.2}),
            json.dumps({"no_event_key": 1}), "[1, 2, 3]"]
     sig = latest_train_signals(log)
     assert sig == {"step": 10, "loss": 2.5, "tok_per_second": 1000.0, "peak_mem_gb": 2.4, "val_loss": 2.2}
 
 
 def test_nan_loss_is_rendered_and_bool_or_string_values_are_dropped():
-    bad = json.dumps({"event": "step", "step": 3, "loss": float("nan"), "tok_per_s": True, "peak_mem_gb": "2"})
+    bad = json.dumps({"event": "step", "step": 3, "loss": float("nan"),
+                      "tok_per_s": True, "peak_mem_gb": "2"})
     _, samples = parse(render("v", [job("running", 1.0)], [bad]))
     assert value(samples, "tinyforge_train_step") == 3
     assert value(samples, "tinyforge_train_loss") != value(samples, "tinyforge_train_loss")  # NaN

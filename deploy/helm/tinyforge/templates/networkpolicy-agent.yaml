@@ -1,0 +1,35 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.agent.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $a := $np.agent }}
+# forgectl node agent (port {{ $a.port }}). Selects pods labelled component=agent; this chart does not deploy them yet.
+# The agent is an internal service: only the configured control-plane peers and the scraper may reach it, and it may only
+# resolve DNS plus whatever extra egress you add. It has NO TLS yet (docs/networking.md): terminate it with mesh mTLS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tinyforge.fullname" . }}-agent-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tinyforge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "tinyforge.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: agent
+  policyTypes: ["Ingress", "Egress"]
+  {{- $in := list }}
+  {{- with (include "tinyforge.np.fromPeers" (dict "from" $a.ingressFrom "port" $a.port) | trim) }}{{ $in = append $in . }}{{ end }}
+  {{- with (include "tinyforge.np.fromPeers" (dict "from" $a.metricsFrom "port" $a.port) | trim) }}{{ $in = append $in . }}{{ end }}
+  {{- if $in }}
+  ingress:
+    {{- join "\n" $in | nindent 4 }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    {{- include "tinyforge.np.dns" $np.dns | nindent 4 }}
+    {{- with $a.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

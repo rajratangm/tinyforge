@@ -11,7 +11,8 @@ data
 tools
 infra
 tests
-spec
+spec/*
+!spec/jobspec.v1alpha1.schema.json
 cmd
 internal
 *.gguf

@@ -3,6 +3,10 @@
 Security: every /api/* route needs `Authorization: Bearer $TINYFORGE_API_TOKEN`. With no token configured the
 API refuses to serve unless TINYFORGE_AUTH=off is set explicitly (local development only). /healthz and the
 static UI page stay open; the UI asks for the token and sends it with each call.
+
+Network hardening (see netsec.py): security headers + CSP on every response, a 1 MiB request-body cap, CORS
+off unless TINYFORGE_CORS_ORIGINS lists explicit origins, 429 after repeated wrong tokens from one client, and
+the interactive /docs, /redoc and /openapi.json pages off unless TINYFORGE_DOCS=on.
 """
 
 from __future__ import annotations
@@ -25,7 +29,10 @@ from pydantic import BaseModel, Field
 from . import __version__, hardware
 from .jobstore import JobStore
 from .metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
-from .metrics import LOG_SCAN_LINES, render as render_metrics
+from .metrics import LOG_SCAN_LINES
+from .metrics import render as render_metrics
+from .netsec import AuthFailureLimiter, NetSettings
+from .netsec import install as install_net_security
 
 ROOT = Path.cwd()
 UI_DIR = Path(__file__).parent / "ui"
@@ -38,6 +45,10 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------- auth
 
 
+_net = NetSettings.from_env()  # a bad TINYFORGE_CORS_ORIGINS etc. fails at startup with a clear message
+_auth_limiter = AuthFailureLimiter(_net.auth_fail_limit, _net.auth_fail_window_s)
+
+
 def require_auth(request: Request) -> None:
     if os.environ.get("TINYFORGE_AUTH", "").lower() == "off":
         return
@@ -46,8 +57,18 @@ def require_auth(request: Request) -> None:
         raise HTTPException(503, "API token not configured: set TINYFORGE_API_TOKEN "
                                  "(or TINYFORGE_AUTH=off for local development only).")
     scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    supplied = supplied.strip()
+    # Only requests that present a bearer token count as guesses; a request with no token (how the UI finds
+    # out it needs one) is neither limited nor counted. The client key is the peer address uvicorn reports.
+    guess = scheme.lower() == "bearer" and bool(supplied)
+    client = request.client.host if request.client else "unknown"
+    if guess and (retry := _auth_limiter.blocked(client)) is not None:
+        raise HTTPException(429, "Too many failed authentication attempts; try again later.",
+                            headers={"Retry-After": str(retry)})
     # compare as bytes: compare_digest raises on non-ASCII str, and runs in constant time
-    if scheme.lower() != "bearer" or not hmac.compare_digest(supplied.strip().encode(), token.encode()):
+    if not guess or not hmac.compare_digest(supplied.encode(), token.encode()):
+        if guess:
+            _auth_limiter.record_failure(client)
         raise HTTPException(401, "Missing or invalid API token.", headers={"WWW-Authenticate": "Bearer"})
 
 
@@ -219,7 +240,12 @@ async def lifespan(_: FastAPI):
         _manager.stop()
 
 
-app = FastAPI(title="tinyforge", version=__version__, lifespan=lifespan)
+app = FastAPI(title="tinyforge", version=__version__, lifespan=lifespan,
+              docs_url="/docs" if _net.docs_enabled else None,
+              redoc_url="/redoc" if _net.docs_enabled else None,
+              openapi_url="/openapi.json" if _net.docs_enabled else None)
+_ui_page = UI_DIR / "index.html"
+install_net_security(app, _net, _ui_page.read_bytes() if _ui_page.is_file() else None)
 
 
 class TrainRequest(BaseModel):

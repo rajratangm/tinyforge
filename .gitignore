@@ -17,3 +17,5 @@ tools/bin/
 .terraform.lock.hcl.bak
 
 .env
+
+*.bak

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tinyforge
+description: "tinyforge control layer for Kubernetes: the TrainingJob CRD and (when enabled) its controller."
+type: application
+version: 0.1.0
+# Pinned by the release process; the controller image tag must be set explicitly in values (no :latest).
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"

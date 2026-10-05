@@ -1,0 +1,9 @@
+tinyforge {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+The TrainingJob CRD (trainingjobs.tinyforge.dev) is installed. Try:
+  kubectl apply -f <your-trainingjob>.yaml
+  kubectl get trainingjobs
+{{- if not .Values.controller.enabled }}
+
+The controller is DISABLED (controller.enabled=false): TrainingJobs are validated and stored but nothing runs them yet.
+{{- end }}

@@ -41,9 +41,9 @@ func ExecLauncher(name string, args []string, stderr io.Writer) (Child, error) {
 	return &execChild{cmd: cmd, out: out}, nil
 }
 
-func (c *execChild) Stdout() io.Reader            { return c.out }
-func (c *execChild) Forward(sig os.Signal) error  { return forward(c.cmd.Process, sig) }
-func (c *execChild) Kill() error                  { return c.cmd.Process.Kill() }
+func (c *execChild) Stdout() io.Reader           { return c.out }
+func (c *execChild) Forward(sig os.Signal) error { return forward(c.cmd.Process, sig) }
+func (c *execChild) Kill() error                 { return c.cmd.Process.Kill() }
 
 func (c *execChild) Wait() (int, error) {
 	err := c.cmd.Wait()

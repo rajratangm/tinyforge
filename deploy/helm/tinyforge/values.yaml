@@ -1,0 +1,105 @@
+# The CRD in crds/ is always installed by Helm (Helm never upgrades or deletes CRDs; see deploy/README.md).
+# The controller does not exist yet, so it is OFF by default and nothing else is rendered except the RBAC and
+# NetworkPolicy that the controller will need.
+
+controller:
+  enabled: false
+  image:
+    repository: ghcr.io/rajratangm/tinyforge-controller
+    tag: ""            # required when enabled; "latest" is rejected
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Namespace the controller watches (default: the release namespace). Namespace-scoped by design: no ClusterRole.
+  watchNamespace: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: true   # the controller talks to the API server
+
+rbac:
+  create: true
+
+# Network policy (see docs/networking.md for the standard this implements).
+# Model: every component gets its OWN default-deny policy (Ingress + Egress), then explicit allows from values.
+# Safety rule enforced by the templates: an allow-list that is EMPTY renders NO rule. (In NetworkPolicy, a rule with ports
+# but no from/to means "any peer", so an empty list must never become an open rule.) A "peers" list uses the
+# NetworkPolicy peer syntax: namespaceSelector / podSelector / ipBlock.
+# Enforcement needs a CNI that implements NetworkPolicy (Calico, Cilium, ...); on a CNI without it these objects do nothing.
+networkPolicy:
+  enabled: true
+
+  # Cluster DNS. Egress to DNS is allowed for every component. Override for NodeLocal DNSCache / OpenShift.
+  dns:
+    namespace: kube-system
+    podLabels: { k8s-app: kube-dns }
+
+  # Controller (the only component this chart deploys today). Policy is rendered when networkPolicy.enabled=true.
+  controller:
+    # Prometheus scrape. Disabled by default: the controller has no metrics endpoint yet.
+    metrics:
+      enabled: false
+      port: 8080
+      from: []     # e.g. [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }, podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } } }]
+    egress:
+      # The Kubernetes API server address is cluster specific (find it with: kubectl get endpoints kubernetes -n default).
+      # The controller cannot start without it. Use /32 CIDRs of the API server endpoints.
+      apiServer: { cidrs: [], ports: [443, 6443] }
+      extra: []    # raw NetworkPolicy egress rules
+    ingress:
+      extra: []    # raw NetworkPolicy ingress rules
+
+  # tinyforge API (src/tinyforge/server.py, port 8000). This chart does not deploy it yet: the policy selects pods labelled
+  # app.kubernetes.io/component=api and is OFF until you enable it.
+  api:
+    enabled: false
+    port: 8000
+    ingressFrom: []                      # peers allowed to call the API: your ingress controller namespace, etc.
+    metricsFrom: []                      # peers allowed to scrape /metrics on the same port (Prometheus)
+    egress:
+      modelHub: { cidrs: [], ports: [443] }   # plain NetworkPolicy has no FQDN support: use CIDRs, an egress gateway/mirror, or cilium.*
+      extra: []
+
+  # forgectl node agent (internal/agent, port 7070). Same pattern: label component=agent, OFF until enabled.
+  agent:
+    enabled: false
+    port: 7070
+    ingressFrom: []                      # the controller / control plane only
+    metricsFrom: []                      # Prometheus
+    egress:
+      extra: []
+
+  # Training/inference worker pods created by the future operator (label component=worker). OFF until enabled.
+  # Workers may only talk to: DNS, the model hub / registry / storage allow-lists, and other workers in the SAME namespace
+  # for collective communication (NCCL). NetworkPolicy cannot say "same job" (it cannot compare label values between pods),
+  # so tenant isolation is per namespace: run one tenant or trust group per namespace.
+  worker:
+    enabled: false
+    collective:
+      enabled: false                     # allow worker<->worker traffic inside the namespace for NCCL / torchrun
+      portRange: { port: 29400, endPort: 29999 }   # rendezvous + NCCL socket ports; set to match your launcher (PLANNED, untested)
+    egress:
+      modelHub: { cidrs: [], ports: [443] }
+      registry: { cidrs: [], ports: [443] }
+      storage: { cidrs: [], ports: [443] }       # S3 VPC endpoint prefix list CIDRs, NFS/Lustre servers (add ports via extra)
+      extra: []
+
+  # Optional CiliumNetworkPolicy for FQDN egress (plain NetworkPolicy cannot match DNS names). OFF by default and needs
+  # Cilium as the CNI plus its CRDs installed. Rules are ADDITIVE with the NetworkPolicies above (allow-lists are unioned).
+  cilium:
+    enabled: false
+    components: [worker]                 # which components get FQDN egress: api | agent | worker
+    ports: [443]
+    fqdns:
+      matchNames: []                     # exact names, e.g. huggingface.co
+      matchPatterns: []                  # e.g. "*.s3.amazonaws.com"
+
+  # Back-compat aliases (appended to the controller policy). Prefer controller.egress.extra / controller.ingress.extra.
+  extraEgress: []
+  extraIngress: []

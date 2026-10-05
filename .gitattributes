@@ -1,0 +1,7 @@
+# Linux-first project: keep LF in the repo so files are identical on Windows, Linux and in Docker.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.gguf binary
+*.pt binary
+*.safetensors binary

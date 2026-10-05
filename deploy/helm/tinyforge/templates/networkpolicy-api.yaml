@@ -1,0 +1,37 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.api.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $a := $np.api }}
+# tinyforge API (port {{ $a.port }}). Selects pods labelled component=api; this chart does not deploy them yet.
+# Ingress only from the configured peers (ingress controller, scraper); egress only DNS + the model-hub allow-list.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tinyforge.fullname" . }}-api-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tinyforge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "tinyforge.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+  policyTypes: ["Ingress", "Egress"]
+  {{- $in := list }}
+  {{- with (include "tinyforge.np.fromPeers" (dict "from" $a.ingressFrom "port" $a.port) | trim) }}{{ $in = append $in . }}{{ end }}
+  {{- with (include "tinyforge.np.fromPeers" (dict "from" $a.metricsFrom "port" $a.port) | trim) }}{{ $in = append $in . }}{{ end }}
+  {{- if $in }}
+  ingress:
+    {{- join "\n" $in | nindent 4 }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    {{- include "tinyforge.np.dns" $np.dns | nindent 4 }}
+    {{- with (include "tinyforge.np.toCidrs" $a.egress.modelHub | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with $a.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

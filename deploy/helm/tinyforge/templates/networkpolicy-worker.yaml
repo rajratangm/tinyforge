@@ -1,0 +1,59 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.worker.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $w := $np.worker }}
+# Training/inference workers (label component=worker; created by the future operator, none exist yet).
+# Ingress: nothing, except worker<->worker collective traffic (NCCL / torchrun) inside the same namespace when enabled.
+# Egress: DNS, the model-hub / registry / storage allow-lists, and the same collective range to other workers.
+# Tenant isolation is per namespace (NetworkPolicy cannot compare job labels between pods).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tinyforge.fullname" . }}-worker-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tinyforge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "tinyforge.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  policyTypes: ["Ingress", "Egress"]
+  {{- if $w.collective.enabled }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "tinyforge.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+      ports:
+        - { protocol: TCP, port: {{ $w.collective.portRange.port }}, endPort: {{ $w.collective.portRange.endPort }} }
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    {{- include "tinyforge.np.dns" $np.dns | nindent 4 }}
+    {{- with (include "tinyforge.np.toCidrs" $w.egress.modelHub | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with (include "tinyforge.np.toCidrs" $w.egress.registry | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with (include "tinyforge.np.toCidrs" $w.egress.storage | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- if $w.collective.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "tinyforge.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+      ports:
+        - { protocol: TCP, port: {{ $w.collective.portRange.port }}, endPort: {{ $w.collective.portRange.endPort }} }
+    {{- end }}
+    {{- with $w.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

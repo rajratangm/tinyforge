@@ -387,11 +387,40 @@ def ft_pipeline(
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
-    """Start the API + web UI."""
+def serve(
+    host: str = "127.0.0.1", port: int = 8000,
+    ssl_certfile: Annotated[Path | None, typer.Option(
+        envvar="TINYFORGE_SSL_CERTFILE", help="PEM certificate (chain) to serve HTTPS (TLS 1.2+).")] = None,
+    ssl_keyfile: Annotated[Path | None, typer.Option(
+        envvar="TINYFORGE_SSL_KEYFILE", help="PEM private key for --ssl-certfile.")] = None,
+    ssl_ca_certs: Annotated[Path | None, typer.Option(
+        envvar="TINYFORGE_SSL_CA_CERTS", help="CA bundle used to verify client certificates (mTLS).")] = None,
+    client_cert_required: Annotated[bool, typer.Option(
+        "--client-cert-required",
+        help="mTLS: reject clients without a certificate signed by --ssl-ca-certs.")] = False,
+    insecure_http: Annotated[bool, typer.Option(
+        "--insecure-http",
+        help="Allow plain HTTP on a non-loopback address (trusted private network only).")] = False,
+) -> None:
+    """Start the API + web UI.
+
+    Binding anything but loopback needs TLS (or --insecure-http) AND TINYFORGE_API_TOKEN. In production
+    terminate TLS at an ingress / load balancer; use --client-cert-required for east-west mTLS.
+    """
     import uvicorn
 
-    uvicorn.run("tinyforge.server:app", host=host, port=port)
+    from .netsec import ServeConfigError, resolve_serve
+
+    try:
+        cfg = resolve_serve(host, port, ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+                            ssl_ca_certs=ssl_ca_certs, client_cert_required=client_cert_required,
+                            insecure_http=insecure_http)
+    except ServeConfigError as e:
+        typer.echo(f"serve: {e}", err=True)
+        raise typer.Exit(2) from e
+    for w in cfg.warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
 
 
 if __name__ == "__main__":

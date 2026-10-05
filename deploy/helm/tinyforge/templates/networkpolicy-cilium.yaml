@@ -1,0 +1,54 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.cilium.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $c := $np.cilium }}
+{{- if not (or $c.fqdns.matchNames $c.fqdns.matchPatterns) }}
+{{- fail "networkPolicy.cilium.enabled=true needs networkPolicy.cilium.fqdns.matchNames or matchPatterns; refusing to render an FQDN policy with no names" }}
+{{- end }}
+{{- range $comp := $c.components }}
+{{- if not (has $comp (list "api" "agent" "worker")) }}
+{{- fail (printf "networkPolicy.cilium.components: unknown component %q (use api, agent or worker)" $comp) }}
+{{- end }}
+---
+# FQDN egress for component={{ $comp }} via Cilium (plain NetworkPolicy cannot match DNS names). Requires Cilium as the CNI.
+# ADDITIVE: it unions with the NetworkPolicies in this chart, it does not replace their default-deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "tinyforge.fullname" $ }}-{{ $comp }}-fqdn-egress
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "tinyforge.labels" $ | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "tinyforge.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $comp }}
+  egress:
+    # Let Cilium's DNS proxy observe lookups; without this toFQDNs has nothing to match against.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ $np.dns.namespace | quote }}
+            {{- range $k, $v := $np.dns.podLabels }}
+            {{ $k }}: {{ $v | quote }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        {{- range $c.fqdns.matchNames }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+        {{- range $c.fqdns.matchPatterns }}
+        - matchPattern: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- range $c.ports }}
+            - { port: {{ . | quote }}, protocol: TCP }
+            {{- end }}
+{{- end }}
+{{- end }}

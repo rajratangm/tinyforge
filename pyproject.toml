@@ -16,6 +16,8 @@ dependencies = [
   "fastapi>=0.110",
   "uvicorn>=0.29",
   "psutil>=5.9",
+  "pyyaml>=6",
+  "jsonschema>=4.20",
 ]
 
 [project.optional-dependencies]
