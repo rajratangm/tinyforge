@@ -7,7 +7,7 @@ Each step is finished and measured end to end before the next one starts.
 | 1 | Run 4-bit QLoRA on a real GPU | `ft train --quant 4bit` completes, beats base on held-out loss, and peak VRAM and tok/s are reported against fp16 (2.4 GB, 830 tok/s) | **Done**: see results below |
 | 2 | Task-specific fine-tune demo | On a narrow task (e.g. structured extraction or SQL), the tuned model beats base by 20% or more on a task metric, not just loss | **Done**: see results below |
 | 3 | Fast serving export | The merged model converts to GGUF and generates at least 3x faster than the current 10 tok/s, with outputs matching the original | **Done**: see results below |
-| 4 | Job queue and auth | The API needs a token, and queued jobs survive a server restart | Todo |
+| 4 | Job queue and auth | The API needs a token, and queued jobs survive a server restart | **Done**: bearer-token auth plus SQLite-backed queue (`tests/test_server_auth.py`, `tests/test_jobstore.py`) |
 | 5 | JAX backend | Same `train()` interface, runs under WSL2 or Linux, and loss matches PyTorch within tolerance on a fixed seed | Todo |
 | 6 | More Triton kernels | Fused SwiGLU is faster than PyTorch in a benchmark and passes a numerical test | Todo |
 | 7 | Desktop shell | Tauri wraps the existing UI and launches the backend | Todo |
