@@ -76,3 +76,16 @@ def test_disk_measure_runs_and_cleans_up(tmp_path):
 def test_disk_kind_never_raises(tmp_path):
     kind, _ = m.disk_kind(tmp_path)
     assert kind in {"NVMe SSD", "SSD", "HDD", "unknown"}
+
+
+def test_memory_cli_json_no_measure():
+    import json
+
+    from typer.testing import CliRunner
+
+    from tinyforge.cli import app
+
+    res = CliRunner().invoke(app, ["memory", "--params-b", "0.5", "--no-measure", "--json"])
+    assert res.exit_code in (0, 1)
+    out = json.loads(res.stdout)
+    assert {"hierarchy", "placement", "warnings"} <= out.keys()

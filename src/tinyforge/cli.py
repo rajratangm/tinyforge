@@ -56,6 +56,43 @@ def doctor(as_json: JsonOpt = False) -> None:
     raise typer.Exit(1 if rep.has_errors else 0)
 
 
+@app.command()
+def memory(
+    params_b: Annotated[float, typer.Option("--params-b", help="Model size, billions of params.")] = 8.0,
+    tokens: Annotated[int, typer.Option(help="Tokens per micro-batch.")] = 1024,
+    quant: Annotated[str, typer.Option(help="4bit or none (fp16).")] = "4bit",
+    no_measure: Annotated[bool, typer.Option("--no-measure", help="Skip bandwidth probes.")] = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Probe VRAM/RAM/disk and say where a model's frozen weights would live and the estimated speed."""
+    from . import memtiers
+
+    h = memtiers.probe_hierarchy(measure=not no_measure)
+    p = memtiers.plan_weights(h, params_b * 1e9, tokens, quant)
+    warns = memtiers.ram_pressure_warnings(h)
+    if as_json:
+        from dataclasses import asdict
+
+        print(json.dumps({"hierarchy": h.to_dict(), "placement": asdict(p), "warnings": warns}))
+        return
+    t = Table(title="Memory hierarchy")
+    for c in ("tier", "kind", "capacity GB", "free GB", "GB/s", "measured"):
+        t.add_column(c)
+    for tier in (h.vram, h.ram, h.disk):
+        if tier:
+            bw = "-" if tier.bandwidth_gbps is None else f"{tier.bandwidth_gbps:.1f}"
+            t.add_row(tier.name, tier.kind, f"{tier.capacity_gb}", f"{tier.free_gb}", bw, str(tier.measured))
+    console.print(t)
+    eta = f"{p.tokens_per_s:.0f} tok/s ({p.bound_by}-bound)" if p.tokens_per_s else "n/a"
+    console.print(f"[bold]{params_b:g}B {quant}[/]: weights {p.weights_gb:.1f} GB -> {p.weights_tier}"
+                  f"{' (streamed)' if p.stream else ''}, est. {eta}  [dim](estimate; MFU assumed)[/]")
+    for r in p.reasons:
+        console.print(f"  - {escape(r)}")
+    for w in warns:
+        console.print(f"[yellow]WARN[/] {escape(w)}")
+    raise typer.Exit(0 if p.feasible else 1)
+
+
 @data_app.command("prepare")
 def data_prepare(
     source: Annotated[Path | None, typer.Option(help="Text file; omit to download TinyShakespeare.")] = None,
