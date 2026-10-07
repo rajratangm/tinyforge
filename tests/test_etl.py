@@ -58,3 +58,33 @@ def test_ingest_function_flags_unsupported(tmp_path):
     (tmp_path / "x.xyz").write_text("nope")
     _, meta, rep = ingest([tmp_path])
     assert meta["files_failed"] == 1 and any(d.code == "ETL002" for d in rep.items)
+
+
+def test_clean_keeps_repeated_content_but_drops_page_furniture():
+    code = "```\nif x {\n}\n}\n}\n```"
+    table = "| a | b |\n| yes | no |\n| yes | no |\n| yes | no |"
+    sentence = "\n".join(["This exact sentence repeats on purpose."] * 4)
+    furniture = "\n".join(f"Annual Report\nPage {i} of 9\nbody line number {i}." for i in range(1, 5))
+    out = clean("\n\n".join([code, table, sentence, furniture]))
+    assert out.count("}") == 3 and out.count("| yes | no |") == 3
+    assert out.count("This exact sentence repeats on purpose.") == 4
+    assert "Annual Report" not in out and "Page" not in out and "body line number 4." in out
+
+
+def test_clean_rejoins_pdf_style_wrapped_lines_but_not_headings_or_sentences():
+    wrapped = "Water cycles how\n\nwater evaporates from the\n\nearth and rises. Next."
+    assert clean(wrapped) == "Water cycles how water evaporates from the earth and rises. Next."
+    assert clean("# Title\n\nlowercase para starts here.") == "# Title\n\nlowercase para starts here."
+    assert clean("First sentence ends.\n\nsecond block.") == "First sentence ends.\n\nsecond block."
+
+
+def test_office_and_pdf_extraction_when_markitdown_is_installed(tmp_path):
+    import pytest
+
+    pytest.importorskip("markitdown")
+    docx = pytest.importorskip("docx")
+    d = docx.Document()
+    d.add_paragraph("Refund policy: customers may return items within thirty days of purchase.")
+    f = tmp_path / "p.docx"
+    d.save(str(f))
+    assert "thirty days" in extract(f)

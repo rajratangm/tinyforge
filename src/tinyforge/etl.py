@@ -74,9 +74,32 @@ def extract(path: Path) -> str:
         try:
             from markitdown import MarkItDown
         except ImportError as e:
-            raise RuntimeError(f"{path.name}: reading {ext} needs `pip install markitdown`") from e
+            raise RuntimeError(f"{path.name}: reading {ext} needs the 'docs' extra (markitdown)") from e
         return MarkItDown().convert(str(path)).text_content
     raise RuntimeError(f"{path.name}: unsupported file type {ext!r}")
+
+
+_STRUCTURAL = ("|", "#", "-", "*", ">", "`", "+")
+_ENDS_SENTENCE = (".", "!", "?", ":", ";", '"', "'", ")", "]", "}", "`")
+
+
+def _is_boilerplate_candidate(ln: str) -> bool:
+    """Short, label-like line: no sentence punctuation, not a table/list/heading/code line, has a letter."""
+    return (0 < len(ln) < 80 and not ln.startswith(_STRUCTURAL) and not ln.endswith(_ENDS_SENTENCE)
+            and any(c.isalpha() for c in ln))
+
+
+def _rejoin_wrapped(text: str) -> str:
+    """PDF extractors often emit a blank line at every visual line wrap; glue those fragments back."""
+    out: list[str] = []
+    for block in text.split("\n\n"):
+        prev = out[-1] if out else ""
+        open_ended = prev and not prev.startswith(_STRUCTURAL) and not prev.endswith(_ENDS_SENTENCE)
+        if open_ended and "\n" not in prev and block[:1].islower():
+            out[-1] = prev + " " + block
+        else:
+            out.append(block)
+    return "\n\n".join(out)
 
 
 def clean(text: str) -> str:
@@ -84,10 +107,19 @@ def clean(text: str) -> str:
     text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c)[0] != "C")
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)          # re-join words hyphenated across lines
     lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in text.splitlines()]
-    freq = Counter(ln for ln in lines if ln)
-    # short lines repeated 3+ times are page headers/footers/menus, not content
-    lines = [ln for ln in lines if not (ln and len(ln) < 80 and freq[ln] >= 3)]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    # Page headers/footers/menus repeat 3+ times (page numbers normalised so "Page 1"/"Page 2" match). Only
+    # label-like lines qualify: repeated sentences, table rows, list items and code lines are content.
+    in_code, kept = False, []
+    norm = [re.sub(r"\d+", "#", ln.lower()) for ln in lines]
+    freq = Counter(n for ln, n in zip(lines, norm, strict=True) if _is_boilerplate_candidate(ln))
+    for ln, n in zip(lines, norm, strict=True):
+        if ln.startswith("```"):
+            in_code = not in_code
+        if not in_code and _is_boilerplate_candidate(ln) and freq[n] >= 3:
+            continue
+        kept.append(ln)
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    return _rejoin_wrapped(text)
 
 
 def chunk_text(text: str, max_words: int = 300) -> list[str]:

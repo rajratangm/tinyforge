@@ -26,6 +26,7 @@ triton = ["triton>=3.0; platform_system == 'Linux'", "triton-windows; platform_s
 finetune = ["transformers>=4.45", "peft>=0.12", "datasets>=2.20", "accelerate>=0.33", "bitsandbytes>=0.43"]
 jax = ["jax[cuda12]; platform_system == 'Linux'"]
 aws = ["boto3>=1.34"]
+docs = ["markitdown[pdf,docx,pptx,xlsx]>=0.1"]
 
 [project.scripts]
 tinyforge = "tinyforge.cli:app"
