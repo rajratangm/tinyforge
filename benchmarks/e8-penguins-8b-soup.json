@@ -1,0 +1,66 @@
+{
+  "n": 100,
+  "table": "penguins",
+  "table_rows": 344,
+  "server": "http://127.0.0.1:8099",
+  "tuned": {
+    "exec_accuracy": 1.0,
+    "sql_error_rate": 0.0,
+    "exact_match": 1.0,
+    "seconds": 136.9,
+    "sample_misses": []
+  },
+  "base_instructed": {
+    "exec_accuracy": 0.93,
+    "sql_error_rate": 0.07,
+    "exact_match": 0.93,
+    "seconds": 134.8,
+    "sample_misses": [
+      {
+        "q": "What is the highest bill length mm where island is Torgersen?",
+        "gold": "SELECT MAX(bill_length_mm) FROM penguins WHERE island = 'Torgersen'",
+        "pred": "SELECT MAX bill_length_mm FROM penguins WHERE island = 'Torgersen'",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest bill length mm where island is Dream?",
+        "gold": "SELECT MAX(bill_length_mm) FROM penguins WHERE island = 'Dream'",
+        "pred": "SELECT MAX bill_length_mm FROM penguins WHERE island = 'Dream'",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest bill length mm where sex is FEMALE?",
+        "gold": "SELECT MAX(bill_length_mm) FROM penguins WHERE sex = 'FEMALE'",
+        "pred": "SELECT MAX bill_length_mm FROM penguins WHERE sex = 'FEMALE'",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest flipper length mm where island is Dream?",
+        "gold": "SELECT MAX(flipper_length_mm) FROM penguins WHERE island = 'Dream'",
+        "pred": "SELECT MAX flipper_length_mm FROM penguins WHERE island = 'Dream'",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest bill length mm where species is Gentoo?",
+        "gold": "SELECT MAX(bill_length_mm) FROM penguins WHERE species = 'Gentoo'",
+        "pred": "SELECT MAX bill_length_mm FROM penguins WHERE species = 'Gentoo'",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest bill length mm where island is Biscoe?",
+        "gold": "SELECT MAX(bill_length_mm) FROM penguins WHERE island = 'Biscoe'",
+        "pred": "SELECT MAX bill_length_mm FROM penguins WHERE island = 'Biscoe'",
+        "why": "error"
+      }
+    ]
+  },
+  "model": "Llama-3.1-8B-Instruct (NousResearch mirror)",
+  "pipeline": "6 public seaborn tables (titanic, mpg, tips, car_crashes, planets, healthexp) -> data tabular (1800 verified examples) -> tinyforge worker run backend=soup, NF4, 200 steps, batch 1 x accum 2, 9m29s, 2 examples/step -> adapter -> GGUF (llama.cpp b11380: adapter f16, base Q4_K_M) -> llama-server -ngl 24 on RTX 3050 Ti 4 GB, ~18 tok/s -> eval on 100 questions about an UNSEEN table (penguins)",
+  "caveats": [
+    "tuned = 100/100 is a ceiling; base_instructed is already 93%, so this test cannot show how much headroom fine-tuning adds",
+    "all 7 base misses are the same malformed MAX/MIN call (MAX bill_length_mm without parentheses): the gain here is consistency, not new capability",
+    "test questions use the same 12 templates as training on a new schema, so it measures transfer to new tables, not to new kinds of questions",
+    "adapter trained on the NF4 base, served on a Q4_K_M base: a small quantisation mismatch that did not hurt here",
+    "n=100, one run, greedy decoding, no confidence interval; the same test on the 3B model was not run"
+  ]
+}

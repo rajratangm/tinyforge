@@ -61,3 +61,12 @@ card is 119.6 tok/s. Adapter quality is checked separately (see `benchmarks/`).
   and answered a held-out-style SQL question correctly.
 - Bugs this found that a fake Soup missed: relative paths (child runs in another cwd) and block-buffered stdout
   (no live progress without `PYTHONUNBUFFERED`).
+
+## 8B on 4 GB, end to end (2026-10-07)
+
+Llama-3.1-8B-Instruct, trained through `tinyforge worker run` with `backend: soup` (6 tables, 1800 verified
+text-to-SQL examples, 200 steps, 9m29s), converted to GGUF (adapter f16, base Q4_K_M) and served with llama.cpp
+(`-ngl 24`, ~18 tok/s on the 4 GB card). On 100 questions about a table never seen in training (penguins):
+tuned **100%** execution accuracy vs **93%** for the same 8B base told to reply with SQL only. That margin is
+small: the test is easy and templated, so it shows transfer to a new schema, not to harder questions. Details and
+caveats: `benchmarks/e8-penguins-8b-soup.json`.
