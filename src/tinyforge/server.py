@@ -402,6 +402,11 @@ def api_generate(req: GenRequest):
 
 app.include_router(api)
 
+from .openai_api import HFBackend, build_router  # noqa: E402
+
+_backend = HFBackend(ROOT / "runs" / "ft")  # tests replace this with a fake
+app.include_router(build_router(require_auth, lambda: _backend, _busy))
+
 
 _METRICS_JOB_LIMIT = 100_000  # JobStore.list is capped; the table has no retention yet, so counts stop here
 
