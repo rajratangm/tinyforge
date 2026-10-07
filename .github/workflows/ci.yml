@@ -88,7 +88,8 @@ jobs:
 
   # Real-GPU training/eval gate: runs on a self-hosted GPU runner (see infra/terraform).
   gpu-e2e:
-    if: github.ref == 'refs/heads/main'
+    # Runs only when a self-hosted GPU runner exists: set the repo variable HAS_GPU_RUNNER=true.
+    if: github.ref == 'refs/heads/main' && vars.HAS_GPU_RUNNER == 'true'
     needs: [lint-test]
     runs-on: [self-hosted, gpu]
     steps:
