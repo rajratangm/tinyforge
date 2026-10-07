@@ -1,0 +1,71 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "steps": 15,
+  "max_len": 384,
+  "data_dir": "data/sql",
+  "env": {
+    "python": "3.12.7",
+    "torch": "2.6.0+cu124",
+    "os": "Windows-11-10.0.26200-SP0",
+    "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+    "vram_gb": 4.0
+  },
+  "variants": [
+    {
+      "name": "off",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": false
+      },
+      "wall_s": 27.5,
+      "ok": true,
+      "peak_mem_gb": 0,
+      "median_tok_per_s": null,
+      "last_loss": null,
+      "step_events": 0
+    },
+    {
+      "name": "on",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": true
+      },
+      "wall_s": 25.1,
+      "ok": true,
+      "peak_mem_gb": 0,
+      "median_tok_per_s": null,
+      "last_loss": null,
+      "step_events": 0
+    },
+    {
+      "name": "off2",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": false
+      },
+      "wall_s": 117.1,
+      "ok": true,
+      "peak_mem_gb": 3.6463656425476074,
+      "median_tok_per_s": 288.573316636032,
+      "last_loss": 0.123740219976753,
+      "step_events": 4
+    },
+    {
+      "name": "on2",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": true
+      },
+      "wall_s": 80.0,
+      "ok": true,
+      "peak_mem_gb": 2.9536948204040527,
+      "median_tok_per_s": 499.43907254695233,
+      "last_loss": 0.12565825413912535,
+      "step_events": 4
+    }
+  ]
+}
