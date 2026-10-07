@@ -1,0 +1,11 @@
+{
+  "model": "SmolLM2-360M-Instruct architecture and tokenizer with RANDOM weights (361M params)",
+  "run": "tinyforge ft data -> ft train 120 steps -> ft eval, SQL data, RTX 3050 Ti 4 GB",
+  "val_loss_base": 10.99,
+  "val_loss_tuned": 6.85,
+  "random_guess_loss": 10.8,
+  "reading": "Training lowered the loss 37%, which an evaluation relative to the base would call a big improvement. The base is random (loss = ln(49152) = 10.8), and the tuned model still emits looping garbage such as 'SELECT FROM table_ FROM table_name_1_1_1...'.",
+  "before_fix": {"passed": true, "diagnostics": []},
+  "after_fix": {"passed": false, "diagnostics": ["FE010 base model looks untrained", "FE011 4/4 generations are degenerate loops"]},
+  "no_chat_template_model": "sshleifer/tiny-gpt2 -> before: Python traceback; after: ERROR FD007 with the fix, exit 1"
+}

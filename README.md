@@ -4,6 +4,10 @@ Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed 
 One engine, three front doors: **CLI** (for developers/CI), **REST API**, and a **web UI** (which can later be
 wrapped as a desktop app with Tauri/Electron without changing the backend).
 
+**Status: early alpha (0.1).** Tested on Windows with one NVIDIA GPU; Linux passes the test suite in Docker but has not
+been run on a real GPU box. Install: `pip install tinyforge`, then `tinyforge doctor` to see what else you need
+(PyTorch, `pip install "tinyforge[finetune]"`, and optional pieces such as Soup and llama.cpp).
+
 ## Quick start
 
 ```bash
@@ -87,6 +91,31 @@ terraform init -backend-config="bucket=<state-bucket>" -backend-config="key=tiny
 terraform apply -var enable_gpu_worker=true -var alert_email=you@example.com
 # then run the `connect` output command to port-forward the UI over SSM (no open ports)
 ```
+
+## Verified results (what was actually run)
+
+Everything below was run on one machine: **Windows 11, RTX 3050 Ti Laptop GPU (4 GB), 16 GB RAM**. Each row links to the
+raw numbers. These are single runs on small test sets, not benchmarks: read the caveats in each JSON file.
+
+| What was tested | Result | Data |
+|---|---|---|
+| Llama-3.1-8B fine-tuned on a 4 GB GPU (layer streaming through the job spec), served with llama.cpp | trained 200 steps in 9.5 min; on 100 questions about a table it never saw: **100%** execution accuracy vs **93%** for the same model told to reply with SQL only | [`e8-penguins-8b-soup.json`](benchmarks/e8-penguins-8b-soup.json) |
+| Same 8B model, harder question shapes never used in training | **98%** vs **97%**: no meaningful gain over a well-prompted base model. Fine-tuning mostly fixed output format | [`e8-penguins-8b-hard.json`](benchmarks/e8-penguins-8b-hard.json) |
+| Qwen2.5-3B fine-tuned end to end (data -> train -> evaluate -> serve) | **98%** execution accuracy vs **70%** for the base model told to reply with SQL (0% without that instruction) | [`e2e-titanic-3b-soup.json`](benchmarks/e2e-titanic-3b-soup.json) |
+| Soup-trained adapter, quality check (3B) | exact match 4% -> 45%, SQL that runs 9% -> 88% on 100 held-out rows | [`soup-adapter-check-qwen3b.json`](benchmarks/soup-adapter-check-qwen3b.json) |
+| Chunked cross-entropy (memory saving), Qwen2.5-1.5B 4-bit | peak GPU memory 3.65 -> 2.95 GB, 289 -> 499 tok/s, same loss | [`chunked-ce-qwen1p5b-4bit-rerun.json`](benchmarks/chunked-ce-qwen1p5b-4bit-rerun.json) |
+| llama.cpp inference options, 3B | flash attention ~8% faster; 8-bit KV cache halves the cache (144 -> 76.5 MB); n-gram speculation 129 vs 54.5 tok/s only on repeated requests (no gain on a first request) | [`inference-techniques-qwen3b.json`](benchmarks/inference-techniques-qwen3b.json) |
+| A deliberately **bad model** (random weights, real architecture) | the tool now fails it: `FE010` base model looks untrained, `FE011` degenerate looping output (before the fix it printed "passed"). A model without a chat template gets a clear `FD007` error | `tests/test_bad_models.py` |
+| Test suite | 290 tests pass on Windows (Python 3.12) and on Linux in Docker (Python 3.10 and 3.12, CPU PyTorch) | `pytest -q` |
+
+What these results do **not** show: general-purpose quality gains (the SQL tests use templated questions), results on
+other hardware or operating systems, multi-GPU training, or the standard benchmark runner (`bench run`, built on
+`lm-evaluation-harness`), which has not been run end to end yet.
+
+![The dashboard serving a 3B model through llama.cpp: time to first token, throughput, latency, per-token latency, prefill speed, KV-cache growth and GPU memory per request](docs/images/dashboard.png)
+
+*The dashboard while serving a 3B model. KV-cache use grows linearly with context (36 KiB per token) while GPU
+memory stays flat, because llama.cpp reserves the cache up front.*
 
 ## Honest limits / roadmap
 

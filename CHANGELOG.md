@@ -22,6 +22,10 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 - Supply chain: SHA-pinned Actions, govulncheck, gitleaks, Dependabot, hashed dependency locks.
 
 ### Fixed
+- `ft eval` no longer passes a model whose base is untrained or whose output is degenerate (FE010/FE011); relative-gain
+  gates fail closed in that case; a model without a chat template gets FD007 instead of a traceback.
+- `transformers` 5.19.0 is excluded (it fails to import on CPU-only PyTorch 2.6); hashed locks regenerated.
+- The job-spec schema now ships inside the wheel (a pip-installed `worker run` could not find it before).
 - Fine-tuning now ends replies with the chat template's turn terminator instead of the tokenizer's EOS (wrong stop
   token for base models such as Qwen2.5 base).
 - ETL boilerplate filter no longer drops repeated sentences, table rows or code lines; PDF line wraps are rejoined.
