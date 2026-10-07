@@ -17,6 +17,7 @@ import torch
 from pydantic import BaseModel
 
 from . import hardware
+from .memory import causal_lm_loss
 from .warnings import Level, Report
 
 DEFAULT_BASE = "HuggingFaceTB/SmolLM2-360M-Instruct"
@@ -40,6 +41,8 @@ class FTConfig(BaseModel):
     lora_dropout: float = 0.0  # 0 lets PEFT skip dropout kernels: measured ~40% faster
     quant: str = "auto"  # auto | none | 4bit
     grad_checkpointing: bool = False
+    chunked_ce: bool = True  # project only labelled positions through the LM head, in chunks (see memory.py)
+    ce_chunk: int = 2048
     eval_interval: int = 50
     eval_examples: int = 64
     seed: int = 1337
@@ -98,7 +101,8 @@ def estimate_vram_gb(shape: dict, c: FTConfig, quant: str, checkpointing: bool, 
         acts = shape["layers"] * tokens * shape["hidden"] * 2 + 34 * tokens * shape["hidden"] * 2
     else:
         acts = shape["layers"] * 80 * tokens * shape["hidden"]
-    logits = tokens * shape["vocab"] * 10  # bf16 logits + fp32 upcast + grad
+    # bf16 logits + fp32 upcast + grad; chunked CE only ever holds one chunk (at most `tokens` of them)
+    logits = (min(tokens, c.ce_chunk) if c.chunked_ce else tokens) * shape["vocab"] * 10
     return (weights + lora + acts + logits + 0.6 * 1024**3) / 1024**3
 
 
@@ -209,7 +213,7 @@ class ChatDataset:
 
 
 @torch.no_grad()
-def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp) -> float:
+def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp, ce_chunk: int = 0) -> float:
     """Token-weighted mean loss over the first n examples (fixed set => comparable across runs)."""
     was_training = model.training
     model.eval()
@@ -218,9 +222,9 @@ def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp) -> floa
     for i in range(0, len(idx), bs):
         b = ds.collate(idx[i:i + bs], device)
         with torch.autocast(device, dtype=amp, enabled=amp is not None):
-            out = model(**b)
+            loss = causal_lm_loss(model, b, ce_chunk) if ce_chunk else model(**b).loss
         ntok = (b["labels"][:, 1:] != -100).sum().item()
-        total += out.loss.item() * ntok
+        total += loss.item() * ntok
         count += ntok
     model.train(was_training)
     return total / max(1, count)
@@ -307,10 +311,11 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
 
     eps = c.examples_per_step or c.batch_size * c.grad_accum
     budget_tokens = c.token_budget or c.batch_size * c.max_len
-    eval_bs = min(c.batch_size, 4)  # eval keeps full-vocab logits in fp32; stay small
+    ce = c.ce_chunk if c.chunked_ce else 0
+    eval_bs = min(c.batch_size, 4)
     model.train()
     if step == 0:
-        base_val = eval_loss(model, va, c.eval_examples, eval_bs, device, amp)
+        base_val = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce)
         best_val = base_val
         event("eval", step=0, val_loss=base_val, train_loss=None,
               val_ppl=math.exp(min(base_val, 20)))
@@ -333,7 +338,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                 b = tr.collate(idx, device)
                 w = len(idx) / eps
                 with torch.autocast(device, dtype=amp, enabled=amp is not None):
-                    loss = model(**b).loss
+                    loss = causal_lm_loss(model, b, c.ce_chunk) if c.chunked_ce else model(**b).loss
                 scaler.scale(loss * w).backward()
                 loss_acc += loss.item() * w
                 got += len(idx)
@@ -394,7 +399,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                       fix="Lower --max-len or --batch-size, or use --quant 4bit.")
 
         if step % c.eval_interval == 0 or step == c.max_steps:
-            vl = eval_loss(model, va, c.eval_examples, eval_bs, device, amp)
+            vl = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce)
             event("eval", step=step, val_loss=vl, train_loss=loss_acc, val_ppl=math.exp(min(vl, 20)))
             if vl < best_val:
                 best_val, regress = vl, 0

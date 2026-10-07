@@ -318,3 +318,11 @@ Linux (not just this Windows box) -> CI green -> an ADR if it changed a design d
 JAX backend, extra Triton kernels, Tauri desktop shell, own trainer/scheduler/inference engine, ROCm/Apple backends, a
 marketplace. Revisit only when a design partner asks. Priority inside Q: Q1 + Q2 first (cheap, immediately credible), then Q3
 (needed to run anything), then Q4/Q5/Q6 as the controller, serving and multi-node work lands.
+
+## R. DIRECTION UPDATE (user, 2026-10-07): "anyone can train anything"
+Main goal: any user trains any model on whatever hardware they have; the software adapts the method to the memory available
+(the memory ladder in K/L: chunked CE -> 8-bit/paged optimizers -> QLoRA -> LISA -> layer streaming/CPU+NVMe offload) and
+reports honest ETA/RAM. Works on the Windows laptop FIRST; Linux/k8s/datacenter hardening is deferred to the END (do not
+spend time on Linux-only work until the ladder is proven on a model that does not fit in fp16). Each rung is accepted only with
+measured peak VRAM + tok/s on a model that needs it (~1.5B-3B on this 4 GB GPU), raw JSON committed, negative results published.
+Layer-wise local-loss training stays rejected (quality). JAX stays parked (Q8) unless the user asks again.

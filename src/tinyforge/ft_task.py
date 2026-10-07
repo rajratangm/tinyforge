@@ -117,8 +117,11 @@ def sql_exec_match(pred: str, ref: str, schema: str, seeds: tuple[int, ...] = (0
     for seed in seeds:
         con = sqlite3.connect(":memory:")
         try:
-            con.executescript(schema)
-            _populate(con, seed, texts, nums)
+            try:
+                con.executescript(schema)
+                _populate(con, seed, texts, nums)
+            except sqlite3.Error:
+                return False  # unusable schema (e.g. a table created twice): no evidence, not a crash
             want = _run(con, ref)
             if not want:
                 continue

@@ -82,3 +82,8 @@ def test_exec_match_column_order_matters():
 def test_literal_regex_extracts_text_and_numbers():
     from tinyforge.ft_task import _literals
     assert _literals("SELECT x FROM t WHERE n = 'april 6' AND k > 56") == (["april 6"], [56.0])
+
+
+def test_exec_match_bad_schema_is_no_evidence_not_a_crash():
+    dup = "CREATE TABLE t (a INTEGER); CREATE TABLE t (a INTEGER)"
+    assert not sql_exec_match("SELECT a FROM t", "SELECT a FROM t", dup)
