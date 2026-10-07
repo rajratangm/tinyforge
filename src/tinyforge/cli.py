@@ -142,6 +142,32 @@ def data_ingest(
     raise typer.Exit(1 if rep.has_errors else 0)
 
 
+@data_app.command("pairs")
+def data_pairs(
+    chunks: Path,
+    out: Path = Path("data/pairs"),
+    teacher_url: Annotated[str, typer.Option(help="OpenAI-compatible base URL (.../v1)")] = "",
+    teacher_model: str = "default",
+    api_key: str = "",
+    per_chunk: int = 3,
+    val_pct: int = 10,
+    min_grounded: float = 0.8,
+    as_json: JsonOpt = False,
+) -> None:
+    """Chunks -> grounded Q&A pairs. Splits by source file BEFORE the teacher runs; drops ungrounded."""
+    from . import pairs
+
+    if not teacher_url:
+        console.print("[bold red]ERROR[/] --teacher-url is required (any OpenAI-compatible chat endpoint)")
+        raise typer.Exit(1)
+    teacher = pairs.openai_teacher(teacher_url, teacher_model, api_key)
+    meta = pairs.run(chunks, out, teacher, f"{teacher_model}@{teacher_url}", per_chunk, val_pct, min_grounded)
+    if as_json:
+        print(json.dumps({"meta": meta}))
+    else:
+        console.print({k: v for k, v in meta.items() if k != "prompt"})
+
+
 @data_app.command("tabular")
 def data_tabular(
     csv_path: Path,
