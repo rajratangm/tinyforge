@@ -1,4 +1,4 @@
-.PHONY: install lint test e2e docker serve
+.PHONY: install lint test e2e docker serve lock
 
 install:
 	pip install -e ".[dev]"
@@ -12,3 +12,5 @@ docker:
 	docker build -t tinyforge:latest .
 serve:
 	tinyforge serve
+lock:
+	./requirements/lock.sh

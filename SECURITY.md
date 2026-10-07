@@ -14,3 +14,9 @@ execution), the worker contract, the Dockerfile, Helm chart, and Terraform.
 
 Known limits: the Docker image has not been rebuilt since later edits; the Terraform has only
 been validated, never applied; Linux code paths are exercised in CI only. See `docs/networking.md`.
+
+## Known open advisories
+
+- `torch==2.6.0` (pinned in `requirements/torch-constraint.txt`) has 24 advisories listed by pip-audit
+  (fixes in 2.7.x to 2.13). Upgrading needs the bitsandbytes/triton/Windows toolchain re-validated, so it is
+  tracked as a follow-up rather than silently ignored. The CI audit covers every other locked dependency.

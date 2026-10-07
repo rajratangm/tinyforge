@@ -13,11 +13,13 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV
     UV_HTTP_TIMEOUT=900 UV_CONCURRENT_DOWNLOADS=4
 RUN uv python install 3.12 && uv venv /opt/venv --python 3.12
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
-RUN uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 WORKDIR /src
+# Hashed lock: torch 2.6.0 + triton 3.2.0 + CUDA libs resolved together (see requirements/README.md).
+COPY requirements/lock-gpu-linux-py312.txt requirements/
+RUN uv pip install --require-hashes -r requirements/lock-gpu-linux-py312.txt
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN uv pip install ".[triton,finetune]"
+RUN uv pip install --no-deps .
 
 # ---------------------------------------------------------------- runtime: no uv, no pip cache, no source tree
 FROM ${CUDA_BASE} AS runtime
