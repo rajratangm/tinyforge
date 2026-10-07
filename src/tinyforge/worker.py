@@ -42,7 +42,11 @@ class Preempted(BaseException):
 def _schema_path() -> Path:
     if os.environ.get(SCHEMA_ENV):
         return Path(os.environ[SCHEMA_ENV])
-    # Source checkout layout. A wheel/Docker install must set TINYFORGE_JOBSPEC_SCHEMA (not packaged yet).
+    # A copy ships inside the package (kept identical to spec/ by tests/test_packaging.py); the repo copy
+    # is the fallback for odd layouts.
+    packaged = Path(__file__).resolve().parent / "jobspec.v1alpha1.schema.json"
+    if packaged.exists():
+        return packaged
     return Path(__file__).resolve().parents[2] / "spec" / "jobspec.v1alpha1.schema.json"
 
 

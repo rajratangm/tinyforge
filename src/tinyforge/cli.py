@@ -15,7 +15,8 @@ from rich.table import Table
 from . import __version__
 from .worker import worker_app
 
-app = typer.Typer(help="Train, evaluate and serve small LLMs on modest GPUs.", no_args_is_help=True)
+app = typer.Typer(help="Train, evaluate and serve small LLMs on modest GPUs.", no_args_is_help=True,
+                  pretty_exceptions_enable=False)  # main() turns missing-dependency errors into advice
 data_app = typer.Typer(help="Dataset commands.")
 app.add_typer(data_app, name="data")
 app.add_typer(worker_app, name="worker")
@@ -42,17 +43,25 @@ def _main(version: Annotated[bool, typer.Option("--version")] = False) -> None:
 @app.command()
 def doctor(as_json: JsonOpt = False) -> None:
     """Probe hardware and report problems with fixes."""
-    from . import hardware
+    from . import deps, hardware
 
     hw = hardware.probe()
     rep = hardware.diagnose(hw)
+    comps = deps.check_components()
     if as_json:
-        print(json.dumps({"hardware": hw.to_dict(), "diagnostics": rep.to_list()}))
+        print(json.dumps({"hardware": hw.to_dict(), "diagnostics": rep.to_list(), "components": comps}))
         return
     t = Table(title="Hardware")
     for k, v in hw.to_dict().items():
         t.add_row(k, str(v))
     console.print(t)
+    ct = Table(title="Optional components")
+    for c in ("component", "status", "unlocks", "how to get it"):
+        ct.add_column(c)
+    for c in comps:
+        ct.add_row(c["name"], "[green]ok[/]" if c["installed"] else "[yellow]missing[/]", c["unlocks"],
+                   "" if c["installed"] else escape(c["install"]))
+    console.print(ct)
     _show(rep.to_list())
     raise typer.Exit(1 if rep.has_errors else 0)
 
@@ -742,5 +751,21 @@ def serve(
     uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
 
 
+def main() -> None:
+    """Console entry point: a missing optional dependency gets advice and exit 2, not a traceback."""
+    import sys
+
+    from . import deps
+
+    try:
+        app()
+    except ModuleNotFoundError as e:
+        msg = deps.explain_missing(e)
+        if msg is None:
+            raise
+        print(f"tinyforge: {msg}", file=sys.stderr)
+        sys.exit(2)
+
+
 if __name__ == "__main__":
-    app()
+    main()
