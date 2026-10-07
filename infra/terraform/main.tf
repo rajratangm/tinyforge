@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.67"
     }
   }
   # Remote state is configured per environment at init time (partial backend config), e.g.:
