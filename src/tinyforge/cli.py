@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -597,6 +598,9 @@ def serve(
     insecure_http: Annotated[bool, typer.Option(
         "--insecure-http",
         help="Allow plain HTTP on a non-loopback address (trusted private network only).")] = False,
+    engine: Annotated[str, typer.Option(help="hf (in-process) | llamacpp (GGUF via llama-server)")] = "",
+    gguf: Annotated[Path | None, typer.Option(help="Base GGUF for --engine llamacpp.")] = None,
+    lora_gguf: Annotated[Path | None, typer.Option(help="LoRA adapter GGUF for --engine llamacpp.")] = None,
 ) -> None:
     """Start the API + web UI.
 
@@ -616,6 +620,12 @@ def serve(
         raise typer.Exit(2) from e
     for w in cfg.warnings:
         typer.echo(f"WARNING: {w}", err=True)
+    if engine:  # the server module reads these when it is imported by uvicorn below
+        os.environ["TINYFORGE_ENGINE"] = engine
+    if gguf:
+        os.environ["TINYFORGE_GGUF"] = str(gguf)
+    if lora_gguf:
+        os.environ["TINYFORGE_LORA_GGUF"] = str(lora_gguf)
     uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
 
 

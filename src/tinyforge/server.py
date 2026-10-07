@@ -402,11 +402,13 @@ def api_generate(req: GenRequest):
 
 app.include_router(api)
 
+from .engines import make_backend  # noqa: E402
 from .guardrails import COUNTS as GUARD_COUNTS  # noqa: E402
 from .guardrails import GuardConfig, build_filters  # noqa: E402
 from .openai_api import HFBackend, build_router  # noqa: E402
 
-_backend = HFBackend(ROOT / "runs" / "ft")  # tests replace this with a fake
+# TINYFORGE_ENGINE=llamacpp swaps the in-process model for a managed llama-server; tests replace this
+_backend = make_backend(os.environ, HFBackend(ROOT / "runs" / "ft"))
 _guard_in, _guard_out = build_filters(GuardConfig.from_env())  # bad env values fail at startup
 app.include_router(build_router(require_auth, lambda: _backend, _busy, _guard_in, _guard_out))
 

@@ -8,7 +8,8 @@ Guardrail hooks: `input_filters` run on the request messages before generation a
 filtered, then replayed as SSE (so streaming cannot bypass a filter, at the cost of time-to-first-token).
 Both lists are empty unless the host configures guardrails (see guardrails.py).
 
-Limits: one generation at a time (a second request gets 429 + Retry-After), `n` must be 1, no tool calls,
+Limits: concurrency is the backend's `max_concurrency` (1 for in-process models, so a second request gets
+429 + Retry-After; a batching engine such as llama.cpp advertises its slot count), `n` must be 1, no tools,
 no logprobs. A client disconnect stops the response but the generation thread runs to max_tokens.
 """
 from __future__ import annotations
@@ -23,6 +24,8 @@ from typing import Any, Literal, Protocol
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+from .engines import UpstreamError
 
 MAX_MESSAGES = 64
 MAX_CHARS = 32_000
@@ -97,7 +100,19 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                  input_filters: list[Callable[[list[dict]], None]] | None = None,
                  output_filters: list[Callable[[str], str]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/v1", dependencies=[Depends(auth)])
-    gen_lock = threading.Lock()
+    inflight_lock, inflight = threading.Lock(), [0]
+
+    def acquire(backend: Backend) -> bool:
+        """Admit a request if the engine has a free slot (one for in-process backends)."""
+        with inflight_lock:
+            if inflight[0] >= getattr(backend, "max_concurrency", 1):
+                return False
+            inflight[0] += 1
+            return True
+
+    def release() -> None:
+        with inflight_lock:
+            inflight[0] -= 1
     in_filters = input_filters if input_filters is not None else []
     out_filters = output_filters if output_filters is not None else []
 
@@ -129,8 +144,9 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
             backend = get_backend()
         except FileNotFoundError as e:
             return _err(404, str(e), "invalid_request_error", "model_not_found")
-        if not gen_lock.acquire(blocking=False):
-            return _err(429, "Another generation is running; retry shortly.", "rate_limit_error", "busy",
+        if not acquire(backend):
+            return _err(429, "The engine is at its concurrency limit; retry shortly.",
+                        "rate_limit_error", "busy",
                         {"Retry-After": "2"})
         stops = [req.stop] if isinstance(req.stop, str) else list(req.stop or [])[:4]
         cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
@@ -167,8 +183,12 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                     text = f(text)
             except Blocked as e:
                 return _err(400, str(e), "invalid_request_error", e.code)
+            except UpstreamError as e:
+                return _err(502, str(e), "server_error", "upstream_error")
+            except FileNotFoundError as e:  # engines resolve model files lazily, on first use
+                return _err(404, str(e), "invalid_request_error", "model_not_found")
             finally:
-                gen_lock.release()
+                release()
             n_out = backend.count_tokens(text)
             if req.stream:  # buffered path: replay the filtered text as SSE
                 return StreamingResponse(replay(text, finish_reason(stopped, n_out)),
@@ -191,8 +211,17 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                         yield chunk({"content": text})
                 yield chunk({}, finish_reason(stopped, n))
                 yield "data: [DONE]\n\n"
+            except UpstreamError as e:
+                err = {"error": {"message": str(e), "type": "server_error", "code": "upstream_error"}}
+                yield f"data: {json.dumps(err)}\n\n"
+                yield "data: [DONE]\n\n"
+            except FileNotFoundError as e:
+                err = {"error": {"message": str(e), "type": "invalid_request_error",
+                                 "code": "model_not_found"}}
+                yield f"data: {json.dumps(err)}\n\n"
+                yield "data: [DONE]\n\n"
             finally:
-                gen_lock.release()
+                release()
 
         return StreamingResponse(sse(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
