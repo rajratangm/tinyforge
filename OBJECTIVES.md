@@ -326,3 +326,5 @@ reports honest ETA/RAM. Works on the Windows laptop FIRST; Linux/k8s/datacenter 
 spend time on Linux-only work until the ladder is proven on a model that does not fit in fp16). Each rung is accepted only with
 measured peak VRAM + tok/s on a model that needs it (~1.5B-3B on this 4 GB GPU), raw JSON committed, negative results published.
 Layer-wise local-loss training stays rejected (quality). JAX stays parked (Q8) unless the user asks again.
+
+Research log (2026-10-07, claims unverified): docs/research.md. Key finding: Soup CLI (Apache-2.0) already claims exact layer streaming of 8B on a 4 GB RTX 3050 laptop; benchmark it before building our own. See also section R above.
