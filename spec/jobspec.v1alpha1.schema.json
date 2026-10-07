@@ -24,6 +24,11 @@
       "additionalProperties": false,
       "required": ["method", "model", "data"],
       "properties": {
+        "backend": {
+          "enum": ["native", "soup"],
+          "default": "native",
+          "description": "Training engine. native = tinyforge's own loop (whole model on the GPU). soup = Soup CLI exact layer streaming run as a subprocess from its own venv (TINYFORGE_SOUP_BIN): trains models larger than VRAM, single GPU, BETA."
+        },
         "method": { "enum": ["lora", "qlora", "full"], "description": "full is reserved; the worker rejects it until implemented." },
         "model": {
           "type": "object",

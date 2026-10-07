@@ -79,6 +79,8 @@ def check_supported(doc: dict) -> None:
         raise SpecError("nodes>1 is not supported by worker v1 (single node only)")
     if res.get("gpus", 1) > 1:
         raise SpecError("gpus>1 is not supported by worker v1 (0 or 1 GPU)")
+    if s.get("backend", "native") == "soup" and res.get("gpus", 1) < 1:
+        raise SpecError("backend=soup needs a GPU (resources.gpus >= 1)")
 
 
 def to_ft_config(doc: dict, out: Path):
@@ -143,10 +145,39 @@ def evaluate_gates(gates: list[dict], summary: dict, out: Path, data_format: str
     return ok
 
 
+MODEL_CACHE = Path(os.environ.get("TINYFORGE_MODEL_DIR", "")
+                   or Path.home() / ".cache" / "tinyforge" / "models")
+
+
+def _run_soup(doc: dict, cfg, out: Path, emit, say) -> dict | int:
+    """Run the Soup backend. Returns the finished-event summary, or an exit code on failure."""
+    from . import memtiers, soup_backend
+
+    for w in memtiers.ram_pressure_warnings(memtiers.probe_hierarchy(measure=False)):
+        emit("diagnostic", code="WK010", level="warn", message=w, fix="")
+    revision = doc["spec"]["model"].get("revision")
+    model_dir = soup_backend.ensure_local_model(cfg.base_model, MODEL_CACHE, revision)
+    soup_backend.write_run_config(out, model_dir, doc)
+    summary: dict = {}
+
+    def capture(kind: str, /, **kw) -> None:
+        if kind == "finished":
+            summary.update(kw)
+        emit(kind, **kw)
+
+    code, reason = soup_backend.run_soup(doc, out, capture, model_dir)
+    if code == 4:
+        return EXIT_FIT
+    if code:
+        say(f"soup backend failed: {reason}")
+        return EXIT_CRASH
+    return summary
+
+
 def run_job(spec_path: Path, out: Path, dry_run: bool = False) -> int:
     t_emit = sys.stdout
 
-    def emit(kind: str, **kw) -> None:
+    def emit(kind: str, /, **kw) -> None:
         print(json.dumps({"event": kind, "t": time.time(), **kw}), file=t_emit, flush=True)
 
     def say(msg: str) -> None:
@@ -205,7 +236,12 @@ def run_job(spec_path: Path, out: Path, dry_run: bool = False) -> int:
             if rep.has_errors:
                 emit("failed", reason="data preparation failed")
                 return EXIT_CRASH
-        summary = finetune.train(cfg, on_event)
+        if s.get("backend", "native") == "soup":
+            summary = _run_soup(doc, cfg, out, emit, say)
+            if isinstance(summary, int):
+                return summary
+        else:
+            summary = finetune.train(cfg, on_event)
     except Preempted:
         # Weaker than the contract: we stop immediately instead of finishing the step. Checkpoints are written
         # atomically, so the retry resumes from the last one (at most checkpoint.everySteps of work is lost).

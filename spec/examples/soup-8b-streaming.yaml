@@ -1,0 +1,28 @@
+# Fine-tune an 8B model on a 4 GB GPU with Soup's exact layer streaming (backend: soup).
+# Needs Soup installed in its OWN venv: pip install "soup-cli[train]", then
+#   export TINYFORGE_SOUP_BIN=/path/to/that/venv/bin/soup      (Windows: ...\Scripts\soup.exe)
+# Needs ~4 GB of FREE system RAM for the pinned base-weight store; close Docker/WSL/browsers first
+# (`tinyforge memory --params-b 8` shows the plan for this machine).
+apiVersion: tinyforge.dev/v1alpha1
+kind: TrainingJob
+metadata:
+  name: sql-llama31-8b-streamed
+spec:
+  backend: soup
+  method: qlora            # NF4 base; streaming also supports method: lora (fp16) if you have the RAM
+  model:
+    base: NousResearch/Meta-Llama-3.1-8B-Instruct   # downloaded to a plain local folder first (see TINYFORGE_MODEL_DIR)
+  data:
+    source: b-mc2/sql-create-context
+    format: sql-create-context
+    limit: 2000
+    maxLen: 512
+  hyperparameters:
+    maxSteps: 100
+    batchSize: 1
+    gradAccum: 4
+  resources:
+    gpus: 1
+  # val_loss gates fail closed on this backend (Soup emits no per-step eval); use task/gain gates only
+  # when the model fits resident for evaluation.
+  export: [adapter]

@@ -83,6 +83,9 @@ func TestDefaultsMatchSchema(t *testing.T) {
 		"resources":  {"gpus": float64(d.Resources.GPUs), "nodes": float64(d.Resources.Nodes)},
 		"checkpoint": {"everySteps": float64(d.Checkpoint.EverySteps), "resume": d.Checkpoint.Resume},
 	}
+	if have := s.Properties.Spec.Properties["backend"].Default; have != d.Backend {
+		t.Errorf("backend: schema default %v != Go default %v", have, d.Backend)
+	}
 	for section, fields := range got {
 		for field, want := range fields {
 			have := s.Properties.Spec.Properties[section].Properties[field].Default

@@ -27,6 +27,7 @@ type Metadata struct {
 }
 
 type Spec struct {
+	Backend         string          `json:"backend,omitempty"` // native | soup
 	Method          string          `json:"method"`
 	Model           Model           `json:"model"`
 	Data            Data            `json:"data"`
@@ -145,7 +146,8 @@ func defaults() *Job {
 	return &Job{
 		Metadata: Metadata{Namespace: "default"},
 		Spec: Spec{
-			Data: Data{Format: "text", ValPercent: 5, MaxLen: 512},
+			Backend: "native",
+			Data:    Data{Format: "text", ValPercent: 5, MaxLen: 512},
 			Hyperparameters: Hyperparameters{
 				MaxSteps: 300, LearningRate: 2e-4, WarmupSteps: 20, GradClip: 1.0,
 				BatchSize: 4, GradAccum: 4, LoraR: 16, LoraAlpha: 32, Seed: 1337,

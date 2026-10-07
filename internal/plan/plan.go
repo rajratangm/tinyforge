@@ -24,6 +24,9 @@ func Build(j *jobspec.Job) *Plan {
 	if j.Spec.Method == "full" {
 		p.Warnings = append(p.Warnings, "method=full is not implemented by the worker yet; the job would be rejected")
 	}
+	if j.Spec.Backend == "soup" {
+		p.Notes = append(p.Notes, "backend=soup: layer streaming (BETA) runs as a subprocess; needs TINYFORGE_SOUP_BIN and ~4 GB free RAM for an 8B model; val_loss gates fail closed")
+	}
 	if j.Spec.Resources.Nodes > 1 {
 		p.Warnings = append(p.Warnings, "nodes>1: worker v1 supports a single node only")
 	}
@@ -50,6 +53,7 @@ func Render(p *Plan) string {
 	j, h := p.Job, p.Job.Spec.Hyperparameters
 	var b strings.Builder
 	fmt.Fprintf(&b, "TrainingJob %s/%s\n", j.Metadata.Namespace, j.Metadata.Name)
+	fmt.Fprintf(&b, "  backend:     %s\n", j.Spec.Backend)
 	fmt.Fprintf(&b, "  method:      %s\n", j.Spec.Method)
 	fmt.Fprintf(&b, "  model:       %s\n", j.Spec.Model.Base)
 	fmt.Fprintf(&b, "  data:        %s (format %s, maxLen %d)\n", j.Spec.Data.Source, j.Spec.Data.Format, j.Spec.Data.MaxLen)
