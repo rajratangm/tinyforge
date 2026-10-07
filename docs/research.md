@@ -129,3 +129,21 @@ EU AI Act GPAI roles https://cms.law/en/swe/legal-updates/general-purpose-ai-mod
 Fine-tuning pitfalls https://machinelearningmastery.com/5-problems-encountered-fine-tuning-llms-with-solutions/ ;
 Unsloth Studio https://rits.shanghai.nyu.edu/ai/unsloth-studio-open-source-no-code-ui-for-local-llm-training-and-inference/ ;
 Quantization comparison https://computingforgeeks.com/gguf-vs-awq-vs-gptq/ .
+
+## Data pipeline tooling (2026-10-07, web-search summaries only; licences/Windows support NOT yet verified per tool)
+
+Goal: `tinyforge data` = extract -> clean -> dedupe -> make pairs -> verify -> split, wrapping existing tools.
+
+| Stage | Candidate | What the sources say | Status |
+|---|---|---|---|
+| Extract (PDF/docx/pptx/xlsx/html) | Docling (IBM, LF AI & Data, MIT) | AI layout model keeps table structure and reading order; heavier install (PyTorch) | Verify Windows + 4 GB coexistence |
+| Extract (fast path) | MarkItDown (Microsoft) | pdfminer-based, small, no GPU, more formats (audio, epub, email); weak on multi-column/dense tables | Verify licence. Pattern: try MarkItDown, fall back to Docling |
+| Extract (alt) | Unstructured, Marker, MinerU | typed elements / PDF-to-markdown | Not evaluated |
+| Web pages | trafilatura | not searched | Verify |
+| Near-dup removal | text-dedup (MinHash/SimHash/exact), datatrove | both pip-installable, cross-platform per PyPI | Verify on Windows; for <100k rows a hand-rolled MinHash may be enough |
+| Pair generation from documents | Meta synthetic-data-kit, distilabel, DataDreamer | pipelines separate generate / validate / export as distinct steps | Verify licences; needs a teacher model (cost, leakage) |
+| Tabular | row serialization (attribute-value, templates), TableLlama/TableInstruct, TableLoRA (ACL 2025) | serialization choice matters; LLM-based serialization is newer | Prefer templated questions with programmatically verified answers (our SQL exec harness is the pattern) |
+
+Design rules: split train/val BEFORE any synthetic generation (teacher output can leak eval questions); every generator ships with a verification gate (execution check for tables, groundedness check for documents); record teacher model + prompt in the data card.
+
+Sources: https://themenonlab.blog/blog/best-open-source-pdf-to-markdown-tools-2026 , https://www.file2markdown.ai/blog/docling-vs-markitdown , https://huggingface.co/blog/asoria/datadreamer-datasets , https://pypi.org/project/text-dedup/0.3.0/ , https://arxiv.org/pdf/2402.17944 , https://preview.aclanthology.org/setup/2025.acl-long.1090
