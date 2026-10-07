@@ -213,7 +213,7 @@ def data_tabular(
     out: Path = Path("data/tabular.jsonl"),
     count: int = 500,
     seed: int = 0,
-    hard: Annotated[bool, typer.Option("--hard", help="Harder shapes (AND, HAVING, ...): eval only.")] = False,
+    hard: Annotated[bool, typer.Option("--hard", help="Harder shapes (eval only).")] = False,
     as_json: JsonOpt = False,
 ) -> None:
     """CSV -> text-to-SQL examples whose answers were verified by executing them."""
