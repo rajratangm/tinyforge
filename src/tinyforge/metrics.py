@@ -75,7 +75,7 @@ def latest_train_signals(log_lines: Iterable[str]) -> dict[str, float]:
 
 
 def render(version: str, jobs: list[dict], running_log: Iterable[str] = (),
-           host: dict[str, float] | None = None) -> str:
+           host: dict[str, float] | None = None, guard: dict[str, int] | None = None) -> str:
     """Build the /metrics body from job rows (JobStore.list) and the running job's in-memory log lines.
 
     host: optional memory gauges in bytes (ram_total, ram_available, swap_used). Swap or a collapsing
@@ -130,5 +130,10 @@ def render(version: str, jobs: list[dict], running_log: Iterable[str] = (),
         if host and _is_number(host.get(key)):
             metric(name, "gauge", help_)
             o.append(f"{name} {_num(host[key])}")
+
+    if guard:
+        metric("tinyforge_guard_events_total", "counter", "Guardrail actions (blocked/redacted) by reason.")
+        for reason in sorted(guard):
+            o.append(f'tinyforge_guard_events_total{{reason="{_esc(reason)}"}} {int(guard[reason])}')
 
     return "\n".join(o) + "\n"

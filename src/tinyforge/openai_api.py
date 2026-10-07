@@ -3,10 +3,10 @@
 The router is backend-agnostic: a Backend turns chat messages into a stream of text deltas. `HFBackend`
 serves the fine-tuned adapter in runs/ft; tests inject a fake. Auth and GPU-busy checks come from the host.
 
-Guardrail hook: `input_filters` run on the request messages before generation and may raise `Blocked`;
-`output_filters` run on the final text (non-streaming only). Streaming output filtering needs a buffered
-design and is NOT implemented, so deployments that need output filtering must disable streaming. Both lists
-are empty by default: no filtering happens until guardrails are configured.
+Guardrail hooks: `input_filters` run on the request messages before generation and may mutate them or raise
+`Blocked`; `output_filters` run on the final text. When output filters exist, a streaming request is buffered,
+filtered, then replayed as SSE (so streaming cannot bypass a filter, at the cost of time-to-first-token).
+Both lists are empty unless the host configures guardrails (see guardrails.py).
 
 Limits: one generation at a time (a second request gets 429 + Retry-After), `n` must be 1, no tool calls,
 no logprobs. A client disconnect stops the response but the generation thread runs to max_tokens.
@@ -142,7 +142,21 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
         def finish_reason(stopped: bool, n_tokens: int) -> str:
             return "stop" if stopped or n_tokens < req.max_tokens else "length"
 
-        if not req.stream:
+        def chunk(delta: dict, finish: str | None = None) -> str:
+            body: dict[str, Any] = {"id": cid, "object": "chat.completion.chunk", "created": created,
+                                    "model": backend.name,
+                                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+            return f"data: {json.dumps(body)}\n\n"
+
+        def replay(text: str, reason: str) -> Iterator[str]:
+            yield chunk({"role": "assistant", "content": ""})
+            for i in range(0, len(text), 24):
+                yield chunk({"content": text[i:i + 24]})
+            yield chunk({}, reason)
+            yield "data: [DONE]\n\n"
+
+        buffered = bool(out_filters)  # output filters need the whole reply, so a stream is buffered first
+        if not req.stream or buffered:
             try:
                 parts, stopped = [], False
                 for text, hit in deltas():
@@ -156,6 +170,10 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
             finally:
                 gen_lock.release()
             n_out = backend.count_tokens(text)
+            if req.stream:  # buffered path: replay the filtered text as SSE
+                return StreamingResponse(replay(text, finish_reason(stopped, n_out)),
+                                         media_type="text/event-stream",
+                                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             return {"id": cid, "object": "chat.completion", "created": created, "model": backend.name,
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
                                  "finish_reason": finish_reason(stopped, n_out)}],
@@ -163,12 +181,6 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                               "total_tokens": backend.count_tokens(prompt_text) + n_out}}
 
         def sse() -> Iterator[str]:
-            def chunk(delta: dict, finish: str | None = None) -> str:
-                body: dict[str, Any] = {"id": cid, "object": "chat.completion.chunk", "created": created,
-                                        "model": backend.name,
-                                        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
-                return f"data: {json.dumps(body)}\n\n"
-
             try:
                 yield chunk({"role": "assistant", "content": ""})
                 n, stopped = 0, False

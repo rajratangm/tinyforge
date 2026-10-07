@@ -402,10 +402,13 @@ def api_generate(req: GenRequest):
 
 app.include_router(api)
 
+from .guardrails import COUNTS as GUARD_COUNTS  # noqa: E402
+from .guardrails import GuardConfig, build_filters  # noqa: E402
 from .openai_api import HFBackend, build_router  # noqa: E402
 
 _backend = HFBackend(ROOT / "runs" / "ft")  # tests replace this with a fake
-app.include_router(build_router(require_auth, lambda: _backend, _busy))
+_guard_in, _guard_out = build_filters(GuardConfig.from_env())  # bad env values fail at startup
+app.include_router(build_router(require_auth, lambda: _backend, _busy, _guard_in, _guard_out))
 
 
 _METRICS_JOB_LIMIT = 100_000  # JobStore.list is capped; the table has no retention yet, so counts stop here
@@ -422,7 +425,8 @@ def metrics():
 
     vm = psutil.virtual_memory()
     host = {"ram_total": vm.total, "ram_available": vm.available, "swap_used": psutil.swap_memory().used}
-    return Response(render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:]), host),
+    return Response(render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:]), host,
+                                    dict(GUARD_COUNTS)),
                     media_type=METRICS_CONTENT_TYPE)
 
 
