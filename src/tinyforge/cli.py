@@ -56,11 +56,12 @@ def doctor(as_json: JsonOpt = False) -> None:
         t.add_row(k, str(v))
     console.print(t)
     ct = Table(title="Optional components")
-    for c in ("component", "status", "unlocks", "how to get it"):
-        ct.add_column(c)
-    for c in comps:
-        ct.add_row(c["name"], "[green]ok[/]" if c["installed"] else "[yellow]missing[/]", c["unlocks"],
-                   "" if c["installed"] else escape(c["install"]))
+    for col in ("component", "status", "unlocks", "how to get it"):
+        ct.add_column(col)
+    for comp in comps:
+        status = "[green]ok[/]" if comp["installed"] else "[yellow]missing[/]"
+        how = "" if comp["installed"] else escape(comp["install"])
+        ct.add_row(comp["name"], status, comp["unlocks"], how)
     console.print(ct)
     _show(rep.to_list())
     raise typer.Exit(1 if rep.has_errors else 0)

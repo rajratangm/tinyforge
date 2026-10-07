@@ -200,8 +200,8 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                     parts.append(text)
                     stopped = stopped or hit
                 text = "".join(parts)
-                for f in out_filters:
-                    text = f(text)
+                for out_filter in out_filters:
+                    text = out_filter(text)
             except Blocked as e:
                 return _err(400, str(e), "invalid_request_error", e.code)
             except UpstreamError as e:

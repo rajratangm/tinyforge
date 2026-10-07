@@ -127,8 +127,10 @@ def collect_adapter(soup_out: Path, dest: Path) -> list[str]:
 def _lines(proc: subprocess.Popen):
     """Yield text lines, splitting on both \\n and \\r (Soup redraws progress bars with \\r)."""
     buf = b""
+    stream = proc.stdout
+    assert stream is not None  # run_soup opens the child with stdout=PIPE
     while True:
-        chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
+        chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
         if not chunk:
             break
         buf += chunk

@@ -169,7 +169,7 @@ def model_bytes(params_b: float, quant: str) -> float:
 
 def fits_resident(h: Hierarchy, params_b: float, quant: str, overhead_gb: float = 1.0) -> bool:
     """Can the model sit on the GPU (for in-process loglikelihood scoring)?"""
-    return bool(h.vram) and model_bytes(params_b, quant) / GB + overhead_gb <= h.vram.capacity_gb * 0.9
+    return h.vram is not None and model_bytes(params_b, quant) / GB + overhead_gb <= h.vram.capacity_gb * 0.9
 
 
 def estimate_decode_tps(h: Hierarchy, params_b: float, quant: str) -> tuple[float, str]:

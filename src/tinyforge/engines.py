@@ -29,7 +29,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import httpx
@@ -300,7 +300,7 @@ class LlamaCppBackend(ProxyBackend):
                 p.kill()
 
 
-def make_backend(env: dict | None = None, default=None):
+def make_backend(env: Mapping[str, str] | None = None, default=None):
     """Pick the serving engine from the environment (default: the supplied in-process backend)."""
     e = os.environ if env is None else env
     engine = e.get("TINYFORGE_ENGINE", "hf").strip().lower()

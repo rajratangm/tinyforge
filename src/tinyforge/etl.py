@@ -187,7 +187,8 @@ def dedupe(chunks: list[Chunk], threshold: float = 0.8) -> tuple[list[Chunk], in
         if sig is not None:
             cands = {i for b in range(BANDS)
                      for i in buckets.get((b, repr(sig[b * rows:(b + 1) * rows]).encode()), ())}
-            if any(sigs[i] is not None and _jaccard_est(sig, sigs[i]) >= threshold for i in cands):
+            if any(other is not None and _jaccard_est(sig, other) >= threshold
+                   for other in (sigs[i] for i in cands)):
                 near += 1
                 continue
             for b in range(BANDS):

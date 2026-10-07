@@ -20,6 +20,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 PROMPT = (
     "Read the passage and write {n} question-answer pairs a reader could answer using ONLY the passage. "
@@ -96,8 +97,10 @@ def generate(rows: list[dict], teacher: Teacher, per_chunk: int = 3,
              min_frac: float = 0.8) -> tuple[list[dict], dict]:
     out: list[dict] = []
     seen: set[str] = set()
-    stats = {"chunks": len(rows), "teacher_errors": 0, "unparseable": 0, "proposed": 0, "ungrounded": 0,
-             "too_short": 0, "duplicate_question": 0, "kept": 0, "unparseable_samples": []}
+    stats: dict[str, Any] = {
+        "chunks": len(rows), "teacher_errors": 0, "unparseable": 0, "proposed": 0, "ungrounded": 0,
+        "too_short": 0, "duplicate_question": 0, "kept": 0, "unparseable_samples": [],
+    }
     for r in rows:
         try:
             reply = teacher(PROMPT.format(n=per_chunk, chunk=r["text"]))

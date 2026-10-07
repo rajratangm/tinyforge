@@ -95,9 +95,9 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
     train = [m for m in rows if not _is_val(_key(m), val_pct)]
     val = [m for m in rows if _is_val(_key(m), val_pct)]
     for name, data in (("train", train), ("val", val)):
-        with (out_dir / f"{name}.jsonl").open("w", encoding="utf-8") as f:
+        with (out_dir / f"{name}.jsonl").open("w", encoding="utf-8") as fh:
             for m in data:
-                f.write(json.dumps({"messages": m}, ensure_ascii=False) + "\n")
+                fh.write(json.dumps({"messages": m}, ensure_ascii=False) + "\n")
 
     # Length stats with the real tokenizer so truncation is predicted, not discovered.
     from transformers import AutoTokenizer
