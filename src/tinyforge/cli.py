@@ -213,13 +213,14 @@ def data_tabular(
     out: Path = Path("data/tabular.jsonl"),
     count: int = 500,
     seed: int = 0,
+    hard: Annotated[bool, typer.Option("--hard", help="Harder shapes (AND, HAVING, ...): eval only.")] = False,
     as_json: JsonOpt = False,
 ) -> None:
     """CSV -> text-to-SQL examples whose answers were verified by executing them."""
     from . import tabular
 
     t = tabular.load_csv(csv_path)
-    ex, meta = tabular.generate(t, count, seed)
+    ex, meta = (tabular.generate_hard if hard else tabular.generate)(t, count, seed)
     if not ex:
         console.print("[bold red]ERROR[/] no verifiable examples (need a category or number column)")
         raise typer.Exit(1)

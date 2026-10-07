@@ -15,6 +15,7 @@ import csv
 import random
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,3 +163,74 @@ def _unique_extreme(db: sqlite3.Connection, t: Table, sql: str) -> bool:
         return True
     top = db.execute(f"SELECT {m.group(1)} FROM {t.name} ORDER BY {m.group(1)} DESC LIMIT 2").fetchall()
     return len(top) == 1 or top[0] != top[1]
+
+
+def _hard_candidates(t: Table, rng: random.Random):
+    """Question shapes that `_candidates` never produces: use them for held-out evaluation, not training."""
+    idx = {c: i for i, c in enumerate(t.columns)}
+    cats = [c for c in t.columns if t.kinds[c] == "text"
+            and 1 < len({r[idx[c]] for r in t.rows}) <= MAX_CATEGORIES]
+    nums = [c for c in t.columns if t.kinds[c] in ("int", "float")]
+    n = t.name
+    for c in cats:
+        yield f"List the distinct values of {_q(c)}.", f"SELECT DISTINCT {c} FROM {n}", 2, MAX_CATEGORIES
+        yield f"How many different {_q(c)} values are there?", f"SELECT COUNT(DISTINCT {c}) FROM {n}", 1, 1
+        counts = sorted(Counter(r[idx[c]] for r in t.rows if r[idx[c]] is not None).values())
+        if len(counts) > 2:
+            mid = counts[len(counts) // 2]
+            yield (f"Which {_q(c)} values appear in more than {mid} rows?",
+                   f"SELECT {c} FROM {n} GROUP BY {c} HAVING COUNT(*) > {mid}", 1, MAX_CATEGORIES)
+        for m in nums:
+            yield (f"What is the average {_q(m)} for each {_q(c)}?",
+                   f"SELECT {c}, AVG({m}) FROM {n} GROUP BY {c}", 2, MAX_CATEGORIES)
+    for m in nums:
+        vals = sorted(r[idx[m]] for r in t.rows if r[idx[m]] is not None)
+        if len(vals) < 10:
+            continue
+        lo, hi = vals[len(vals) // 4], vals[3 * len(vals) // 4]
+        yield (f"How many rows have {_q(m)} between {lo} and {hi}?",
+               f"SELECT COUNT(*) FROM {n} WHERE {m} BETWEEN {_lit(lo)} AND {_lit(hi)}", 1, 1)
+        yield (f"What are the 3 highest {_q(m)} values?",
+               f"SELECT {m} FROM {n} ORDER BY {m} DESC LIMIT 3", 3, 3)
+    for _ in range(len(t.rows)):
+        r = rng.choice(t.rows)
+        if len(cats) >= 2:
+            c1, c2 = rng.sample(cats, 2)
+            v1, v2 = r[idx[c1]], r[idx[c2]]
+            if v1 is not None and v2 is not None:
+                yield (f"How many rows have {_q(c1)} equal to {v1} and {_q(c2)} equal to {v2}?",
+                       f"SELECT COUNT(*) FROM {n} WHERE {c1} = {_lit(v1)} AND {c2} = {_lit(v2)}", 1, 1)
+        if cats and nums:
+            c, m = rng.choice(cats), rng.choice(nums)
+            vc, vm = r[idx[c]], r[idx[m]]
+            if vc is not None and vm is not None:
+                yield (f"How many rows have {_q(c)} equal to {vc} and {_q(m)} greater than {vm}?",
+                       f"SELECT COUNT(*) FROM {n} WHERE {c} = {_lit(vc)} AND {m} > {_lit(vm)}", 1, 1)
+
+
+def generate_hard(t: Table, count: int = 100, seed: int = 0) -> tuple[list[dict], dict]:
+    """Verified examples of harder shapes (AND, BETWEEN, DISTINCT, HAVING, GROUP BY AVG, top-N). Eval only."""
+    rng = random.Random(seed)
+    db = sqlite3.connect(":memory:")
+    db.execute(t.create_sql())
+    db.executemany(f"INSERT INTO {t.name} VALUES ({','.join('?' * len(t.columns))})", t.rows)
+    schema, seen, out = t.create_sql(), set(), []
+    failed = bad = 0
+    for q, sql, lo, hi in _hard_candidates(t, rng):
+        if q in seen:
+            continue
+        seen.add(q)
+        try:
+            res = db.execute(sql).fetchall()
+        except sqlite3.Error:
+            failed += 1
+            continue
+        trivial = len(res) == 1 and len(res[0]) == 1 and res[0][0] in (None, 0)
+        if not (lo <= len(res) <= hi) or trivial:
+            bad += 1
+            continue
+        out.append({"messages": [{"role": "user", "content": f"{q}\n\n{schema}"},
+                                 {"role": "assistant", "content": sql}]})
+    rng.shuffle(out)
+    return out[:count], {"available": len(out), "failed_to_execute": failed, "dropped_bad_shape": bad,
+                         "table": t.name, "verified_by": "sqlite execution"}

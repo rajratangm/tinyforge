@@ -65,3 +65,26 @@ def test_cli_writes_jsonl(tmp_path):
     res = CliRunner().invoke(app, ["data", "tabular", str(p), "--out", str(out), "--count", "20", "--json"])
     assert json.loads(res.stdout)["meta"]["verified_by"] == "sqlite execution"
     assert 0 < len(out.read_text().splitlines()) <= 20
+
+
+def test_hard_questions_are_new_shapes_verified_and_disjoint_from_training_templates(tmp_path):
+    import re
+
+    from tinyforge.tabular import generate_hard
+
+    t = _table(tmp_path)
+    csv_rows = "\n".join(f"T{i},{['Paris', 'Rome', 'Oslo'][i % 3]},{i},{i / 4:.2f}" for i in range(40))
+    p = tmp_path / "big.csv"
+    p.write_text("Team Name,City,Wins,Score avg\n" + csv_rows + "\n")
+    big = load_csv(p)
+    hard, st = generate_hard(big, count=500, seed=3)
+    train, _ = generate(big, count=2000, seed=3)
+    assert hard and st["failed_to_execute"] == 0
+    shapes = " ".join(e["messages"][1]["content"] for e in hard)
+    for kw in ("DISTINCT", "BETWEEN", "HAVING", "GROUP BY", "ORDER BY", " AND "):
+        assert kw in shapes, kw
+    train_sql = {re.sub(r"'[^']*'|\d+(\.\d+)?", "?", e["messages"][1]["content"]) for e in train}
+    hard_sql = {re.sub(r"'[^']*'|\d+(\.\d+)?", "?", e["messages"][1]["content"]) for e in hard}
+    assert hard_sql - train_sql, "hard set must contain shapes the training generator never emits"
+    assert len(hard_sql & train_sql) < len(hard_sql)
+    assert t.name == "teams"
