@@ -59,3 +59,18 @@ def test_memory_error_detection():
     assert finetune._is_mem_error(RuntimeError("CUBLAS_STATUS_INTERNAL_ERROR when calling"))
     assert finetune._is_mem_error(torch.OutOfMemoryError("CUDA out of memory"))
     assert not finetune._is_mem_error(RuntimeError("shape mismatch"))
+
+
+def test_turn_terminator_follows_template_not_eos():
+    from tinyforge.finetune import turn_terminator
+
+    class Tok:
+        eos_token = "<|endoftext|>"
+
+        def get_vocab(self):
+            return {"<|im_end|>": 1, "<|endoftext|>": 2}
+
+        def apply_chat_template(self, msgs, tokenize=False):
+            return "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in msgs)
+
+    assert turn_terminator(Tok()) == "<|im_end|>"

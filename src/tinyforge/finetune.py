@@ -159,17 +159,34 @@ def plan(c: FTConfig, vram_gb: float, shape: dict | None = None) -> tuple[FTConf
 # ---------------------------------------------------------------- data
 
 
+def turn_terminator(tok) -> str:
+    """The token string the chat template puts after an assistant reply (falls back to eos_token).
+
+    Base models often have eos_token=<|endoftext|> while their template ends turns with <|im_end|>;
+    training on the wrong one makes template-aware servers (llama.cpp, vLLM chat) run past the reply.
+    """
+    probe = "@@reply@@"
+    try:
+        convo = [{"role": "user", "content": "q"}, {"role": "assistant", "content": probe}]
+        full = tok.apply_chat_template(convo, tokenize=False)
+    except Exception:
+        return tok.eos_token
+    tail = full.split(probe, 1)[1].strip() if probe in full else ""
+    return tail if tail and tail in tok.get_vocab() else tok.eos_token
+
+
 class ChatDataset:
     """Tokenised chat examples with loss masked to the assistant reply only."""
 
     def __init__(self, path: Path, tok, max_len: int):
         self.items: list[tuple[list[int], list[int]]] = []
         self.truncated = 0
+        end = turn_terminator(tok)
         for line in path.read_text(encoding="utf-8").splitlines():
             msgs = json.loads(line)["messages"]
             prompt = tok.apply_chat_template(msgs[:-1], add_generation_prompt=True, tokenize=False)
             p_ids = tok(prompt, add_special_tokens=False).input_ids
-            a_ids = tok(msgs[-1]["content"] + tok.eos_token, add_special_tokens=False).input_ids
+            a_ids = tok(msgs[-1]["content"] + end, add_special_tokens=False).input_ids
             ids = p_ids + a_ids
             labels = [-100] * len(p_ids) + a_ids
             if len(ids) > max_len:
