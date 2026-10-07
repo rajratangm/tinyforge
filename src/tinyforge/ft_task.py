@@ -7,6 +7,7 @@ Currently ships a text-to-SQL task (normalised exact match + SQL validity checke
 from __future__ import annotations
 
 import json
+import random
 import re
 import sqlite3
 from pathlib import Path
@@ -48,6 +49,90 @@ def sql_valid(query: str, schema: str) -> bool:
         con.close()
 
 
+_LITERAL = re.compile(r"'([^']*)'|\b(\d+(?:\.\d+)?)\b")
+_MAX_VM_STEPS = 2_000_000  # abort runaway queries (cross joins on generated rows) instead of hanging the eval
+
+
+def _literals(*queries: str) -> tuple[list[str], list[float]]:
+    texts, nums = [], []
+    for q in queries:
+        for t, n in _LITERAL.findall(q):
+            if n:
+                nums.append(float(n))
+            elif t:
+                texts.append(t)
+    return texts, nums
+
+
+def _populate(con: sqlite3.Connection, seed: int, texts: list[str], nums: list[float],
+              rows: int = 30) -> None:
+    """Fill every table with deterministic rows. Values come from the literals the gold query mentions plus
+    a small pool, so WHERE clauses select a non-trivial subset. Execution accuracy is only as strong as
+    this data."""
+    rng = random.Random(seed)
+    text_pool = (texts or []) + ["alpha", "beta", "gamma", "delta", "x", "y"]
+    num_pool = [int(n) if n == int(n) else n for n in nums] + [0, 1, 2, 5, 10, 25, 50, 100]
+    tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    for t in tables:
+        cols = con.execute(f'PRAGMA table_info("{t}")').fetchall()
+        for _ in range(rows):
+            vals = []
+            for c in cols:
+                ctype = (c[2] or "").upper()
+                if any(k in ctype for k in ("INT", "REAL", "NUM", "FLOA", "DOUB", "DEC")):
+                    vals.append(rng.choice(num_pool))
+                else:
+                    vals.append(str(rng.choice(text_pool)))
+            con.execute(f'INSERT INTO "{t}" VALUES ({",".join("?" * len(cols))})', vals)
+
+
+def _run(con: sqlite3.Connection, query: str) -> list[tuple] | None:
+    steps = [0]
+
+    def guard() -> int:
+        steps[0] += 1
+        return 1 if steps[0] > _MAX_VM_STEPS // 1000 else 0
+
+    con.set_progress_handler(guard, 1000)
+    try:
+        return con.execute(query.strip().rstrip(";")).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.set_progress_handler(None, 0)
+
+
+def _canon(rows: list[tuple], ordered: bool) -> list:
+    return [tuple(r) for r in rows] if ordered else sorted(tuple(map(repr, r)) for r in rows)
+
+
+def sql_exec_match(pred: str, ref: str, schema: str, seeds: tuple[int, ...] = (0, 1, 2)) -> bool:
+    """Execution accuracy: gold and predicted SQL return the same result on every generated database.
+    Row order only matters when the gold query has ORDER BY; column order always matters. A gold query that
+    errors or returns no rows on a database is skipped for that seed; if every seed is skipped the example
+    counts as not matching (no evidence)."""
+    texts, nums = _literals(ref)
+    ordered = " order by " in " " + ref.lower() + " "
+    compared = 0
+    for seed in seeds:
+        con = sqlite3.connect(":memory:")
+        try:
+            con.executescript(schema)
+            _populate(con, seed, texts, nums)
+            want = _run(con, ref)
+            if not want:
+                continue
+            got = _run(con, pred)
+            if got is None:
+                return False
+            compared += 1
+            if _canon(got, ordered) != _canon(want, ordered):
+                return False
+        finally:
+            con.close()
+    return compared > 0
+
+
 def sql_score(user: str, pred_raw: str, ref: str) -> dict:
     schema = user.split("\n\n", 1)[1] if "\n\n" in user else ""
     pred = sql_extract(pred_raw)
@@ -55,6 +140,7 @@ def sql_score(user: str, pred_raw: str, ref: str) -> dict:
         "strict_em": sql_norm(pred_raw) == sql_norm(ref),
         "lenient_em": sql_norm(pred) == sql_norm(ref),
         "valid": sql_valid(pred, schema) if schema else False,
+        "exec_acc": sql_exec_match(pred, ref, schema) if schema else False,
     }
 
 
@@ -90,7 +176,20 @@ def _gen_batch(model, tok, prompts: list[str], device: str, max_new: int, bs: in
 
 def _rates(rows: list[dict]) -> dict:
     n = max(1, len(rows))
-    return {k: sum(r[k] for r in rows) / n for k in ("strict_em", "lenient_em", "valid")}
+    out = {k: sum(r[k] for r in rows) / n for k in ("strict_em", "lenient_em", "valid", "exec_acc")}
+    out["ci95"] = {k: wilson_ci(sum(r[k] for r in rows), len(rows)) for k in ("lenient_em", "exec_acc")}
+    return out
+
+
+def wilson_ci(successes: int, n: int, z: float = 1.96) -> list[float]:
+    """Wilson score interval for a proportion (better than +/- sqrt(p(1-p)/n) at small n and extreme p)."""
+    if n == 0:
+        return [0.0, 1.0]
+    p = successes / n
+    d = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+    return [max(0.0, centre - half), min(1.0, centre + half)]
 
 
 def evaluate_task(run_dir: Path, task: str = "sql", n: int = 100, min_gain_pts: float = 0.0,
