@@ -26,6 +26,22 @@ tinyforge serve                    # UI at http://127.0.0.1:8000
 | `eval` | perplexity vs random baseline, diversity, memorisation, determinism, KV-cache correctness, speed/VRAM | EV001-EV009, non-zero exit on failure |
 | `generate`/`serve` | KV-cache decoding, top-k/top-p, int8 weights, optional Triton RMSNorm | |
 
+### Fine-tuning platform commands
+
+| Command | What it does |
+|---|---|
+| `memory` | probe VRAM/RAM/disk and say where a model's frozen weights would live and the estimated speed |
+| `data ingest` | documents (txt, md, html; pdf/docx/pptx/xlsx with the `docs` extra) -> cleaned, chunked, de-duplicated JSONL |
+| `data tabular` | CSV -> text-to-SQL examples whose answers are verified by executing them (`--hard` for eval shapes) |
+| `data pairs` | chunks -> grounded Q&A pairs from a teacher model (any OpenAI-compatible endpoint), split before generation |
+| `data pii-scan`, `--pii` | find emails, phones, cards, IDs and credentials; flag, redact or drop |
+| `worker run --spec job.yaml` | run a TrainingJob; `backend: native` or `soup` (layer streaming for models larger than VRAM) |
+| `export gguf` | adapter + base -> GGUF for llama.cpp |
+| `serve [--engine llamacpp]` | API + UI; OpenAI-compatible `/v1/chat/completions` with guardrails and metrics |
+
+Verified on one RTX 3050 Ti 4 GB laptop (Windows): a 3B and an 8B model fine-tuned through the job spec and served
+locally; see `benchmarks/` and `docs/soup-backend.md`. Early alpha: single GPU, Windows tested only.
+
 Model: decoder-only transformer with RoPE, RMSNorm, SwiGLU, tied embeddings, PyTorch SDPA (FlashAttention kernels).
 Presets: `nano` ~1M, `micro` ~12M, `small` ~28M, `base` ~100M.
 
@@ -81,8 +97,9 @@ terraform apply -var enable_gpu_worker=true -var alert_email=you@example.com
   a general instruction set is modest by design: LoRA on a small, already-tuned model mostly shifts style. Use a
   task-specific dataset to see larger gains.
 - 4-bit QLoRA is verified on real hardware (see ROADMAP.md): it works but ends ~4.7% worse in loss than fp16 on a
-  model that fits in fp16. Its value is fitting larger models; that case is not yet tested.
+  model that fits in fp16. Its value is fitting larger models: an 8B model trains on a 4 GB GPU via `backend: soup`.
 - Generation speed (HF `generate`, eager) is ~10 tok/s on this GPU; the merged model is the thing to export to
   llama.cpp/vLLM for serving.
-- Single-GPU, single-job. Multi-GPU (FSDP) and a job queue come after the single-node path is solid.
-- The web UI has no auth: bind to localhost (default) or put it behind SSM/VPN/reverse proxy.
+- Single-GPU, single-job (a SQLite job queue exists). Multi-GPU (FSDP/DDP) is not built and untested.
+- The API requires `TINYFORGE_API_TOKEN` (bearer) and the server binds to localhost by default; the static UI page
+  itself is not authenticated. Put it behind TLS, SSM/VPN or a reverse proxy before exposing it.

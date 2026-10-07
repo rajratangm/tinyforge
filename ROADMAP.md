@@ -11,6 +11,12 @@ Each step is finished and measured end to end before the next one starts.
 | 5 | JAX backend | Same `train()` interface, runs under WSL2 or Linux, and loss matches PyTorch within tolerance on a fixed seed | Todo |
 | 6 | More Triton kernels | Fused SwiGLU is faster than PyTorch in a benchmark and passes a numerical test | Todo |
 | 7 | Desktop shell | Tauri wraps the existing UI and launches the backend | Todo |
+| 8 | Memory-aware planning | `tinyforge memory` probes VRAM/RAM/disk, chunked cross-entropy cuts peak memory, a cost model says where weights live | **Done**: chunked CE 3.65 -> 2.95 GB peak, 289 -> 499 tok/s (`benchmarks/`); the cost model is uncalibrated |
+| 9 | Train a model larger than VRAM | An 8B model fine-tunes on a 4 GB GPU through the job spec | **Done**: `backend: soup` (layer streaming), Llama-3.1-8B, 200 steps in 9.5 min (`docs/soup-backend.md`); Windows only, BETA upstream |
+| 10 | Data pipeline | Documents and tables become checked training data | **Done (v1)**: `data ingest/tabular/pairs/pii-scan`; PDF/Office via the `docs` extra; pair quality from a real teacher is only spot-checked |
+| 11 | Serving | OpenAI-compatible API with guardrails, GGUF export and a llama.cpp engine | **Done (v1)**: `/v1/chat/completions`, `export gguf`, `serve --engine llamacpp`; guardrails are pattern-based only |
+| 12 | Multi-GPU, DPO/RL, safety classifier, vLLM | Not built (vLLM deliberately on hold) | Todo |
+| 13 | Linux, Kubernetes and multi-node hardening | Run and verified on Linux and a 2-GPU box | Todo (deliberately last) |
 
 ## Step 1 results: 4-bit QLoRA vs fp16 (RTX 3050 Ti 4 GB, SmolLM2-360M, 150 steps x 16 examples)
 
