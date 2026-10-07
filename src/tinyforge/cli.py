@@ -566,6 +566,59 @@ def ft_pipeline(
     console.print("[bold green]Fine-tuning pipeline complete.[/]")
 
 
+methods_app = typer.Typer(help="Choose a fine-tuning method that fits this machine.")
+app.add_typer(methods_app, name="methods")
+
+
+@methods_app.command("list")
+def methods_list(as_json: JsonOpt = False) -> None:
+    """The fine-tuning methods the tool knows, and what has actually been verified."""
+    from dataclasses import asdict
+
+    from . import methods
+
+    if as_json:
+        print(json.dumps([asdict(m) for m in methods.CATALOG.values()]))
+        return
+    t = Table(title="Fine-tuning methods")
+    for c in ("name", "family", "data", "backends", "verified here"):
+        t.add_column(c)
+    for m in methods.CATALOG.values():
+        t.add_row(m.name, m.family, m.data, ",".join(m.backends) or "-", m.verified)
+    console.print(t)
+
+
+@methods_app.command("suggest")
+def methods_suggest(
+    params_b: Annotated[float, typer.Option("--params-b", help="Model size, billions of params.")] = 8.0,
+    data: Annotated[str, typer.Option(help="sft (prompt/answer) | preference (chosen/rejected)")] = "sft",
+    prefer: Annotated[str, typer.Option(help="quality | fit")] = "quality",
+    no_measure: Annotated[bool, typer.Option("--no-measure", help="Skip bandwidth probes.")] = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Which methods fit this GPU/RAM for a model of this size, on which backend, and why."""
+    from . import deps, memtiers, methods
+
+    h = memtiers.probe_hierarchy(measure=not no_measure)
+    have = {c["name"] for c in deps.check_components() if c["installed"]}
+    backends = tuple(b for b, need in (("native", "finetune"), ("soup", "soup")) if need in have)
+    recs, ctx = methods.recommend_methods(h, params_b, data, backends or ("native", "soup"), prefer)
+    ctx["installed_backends"] = list(backends)
+    if as_json:
+        print(json.dumps({"context": ctx, "methods": [r.to_dict() for r in recs]}))
+        return
+    have_txt = ", ".join(backends) or "none (showing what would fit)"
+    hw_txt = f"{ctx['vram_gb']:g} GB VRAM, {ctx['free_ram_gb']} GB RAM free"
+    console.print(f"[bold]{params_b:g}B model[/]: {hw_txt}; backends installed: {have_txt}")
+    t = Table()
+    for c in ("#", "method", "fits", "backend", "~GB", "why"):
+        t.add_column(c)
+    for r in recs:
+        t.add_row(str(r.rank or "-"), r.name, "yes" if r.fits else "no", r.backend, str(r.need_gb),
+                  escape(" | ".join(r.why[1:] or r.why)))
+    console.print(t)
+
+
 bench_app = typer.Typer(help="Pick and run standard benchmarks sized to this machine.")
 app.add_typer(bench_app, name="bench")
 
