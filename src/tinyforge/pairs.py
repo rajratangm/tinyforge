@@ -45,7 +45,7 @@ def openai_teacher(base_url: str, model: str, api_key: str = "", timeout: float 
     def call(prompt: str) -> str:
         r = httpx.post(f"{base_url.rstrip('/')}/chat/completions", timeout=timeout,
                        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-                       json={"model": model, "temperature": 0.2,
+                       json={"model": model, "temperature": 0.2, "max_tokens": 600,
                              "messages": [{"role": "user", "content": prompt}]})
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
@@ -53,16 +53,30 @@ def openai_teacher(base_url: str, model: str, api_key: str = "", timeout: float 
     return call
 
 
+def _valid(i: object) -> bool:
+    return isinstance(i, dict) and isinstance(i.get("question"), str) and isinstance(i.get("answer"), str)
+
+
 def _parse(reply: str) -> list[dict]:
+    """Q&A objects from a teacher reply. Tries the whole JSON array first; if the reply is fenced, has
+    trailing prose, or was cut off mid-array, recovers each complete {...} object individually."""
     m = re.search(r"\[.*\]", reply, re.S)
-    if not m:
-        return []
-    try:
-        items = json.loads(m.group(0))
-    except ValueError:
-        return []
-    return [i for i in items if isinstance(i, dict) and isinstance(i.get("question"), str)
-            and isinstance(i.get("answer"), str)]
+    if m:
+        try:
+            items = json.loads(m.group(0))
+            if isinstance(items, list):
+                return [i for i in items if _valid(i)]
+        except ValueError:
+            pass
+    found = []
+    for obj in re.finditer(r"\{[^{}]*\}", reply):
+        try:
+            i = json.loads(obj.group(0))
+        except ValueError:
+            continue
+        if _valid(i):
+            found.append(i)
+    return found
 
 
 def _content_words(s: str) -> list[str]:
@@ -83,7 +97,7 @@ def generate(rows: list[dict], teacher: Teacher, per_chunk: int = 3,
     out: list[dict] = []
     seen: set[str] = set()
     stats = {"chunks": len(rows), "teacher_errors": 0, "unparseable": 0, "proposed": 0, "ungrounded": 0,
-             "too_short": 0, "duplicate_question": 0, "kept": 0}
+             "too_short": 0, "duplicate_question": 0, "kept": 0, "unparseable_samples": []}
     for r in rows:
         try:
             reply = teacher(PROMPT.format(n=per_chunk, chunk=r["text"]))
@@ -93,6 +107,8 @@ def generate(rows: list[dict], teacher: Teacher, per_chunk: int = 3,
         items = _parse(reply)
         if not items:
             stats["unparseable"] += 1
+            if len(stats["unparseable_samples"]) < 3:  # raw replies: what did the teacher return?
+                stats["unparseable_samples"].append(reply[:300])
         for it in items[:per_chunk]:
             stats["proposed"] += 1
             q, a = it["question"].strip(), it["answer"].strip()

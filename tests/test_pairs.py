@@ -55,3 +55,21 @@ def test_run_writes_split_and_meta(tmp_path):
     meta = run(cp, tmp_path / "o", _teacher(reply), "fake", per_chunk=1, val_pct=20)
     assert meta["teacher"] == "fake" and (tmp_path / "o" / "meta.json").exists()
     assert meta["train"]["kept"] >= 1
+
+
+def test_parser_recovers_pairs_from_fenced_truncated_and_chatty_replies():
+    from tinyforge.pairs import _parse
+
+    full = '[{"question": "Who orbited?", "answer": "Collins"}, {"question": "When?", "answer": "1969"}]'
+    assert len(_parse(full)) == 2
+    assert len(_parse("Sure! Here you go:\n```json\n" + full + "\n```\nHope that helps.")) == 2
+    cut = '[{"question": "Who orbited?", "answer": "Collins"}, {"question": "When did it hap'
+    assert [p["answer"] for p in _parse(cut)] == ["Collins"]  # complete objects survive a cut-off array
+    lines = '{"question": "A one?", "answer": "x"}\n{"question": "B two?", "answer": "y"}'
+    assert len(_parse(lines)) == 2
+    assert _parse("I cannot do that.") == [] and _parse('[{"question": 5, "answer": "x"}]') == []
+
+
+def test_unparseable_replies_are_sampled_in_stats():
+    _, st = generate([{"source": "a", "text": CHUNK}], _teacher("no json here at all"))
+    assert st["unparseable"] == 1 and st["unparseable_samples"] == ["no json here at all"]
