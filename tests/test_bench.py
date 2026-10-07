@@ -230,3 +230,12 @@ def test_sql_exec_scores_result_sets_not_strings(tmp_path):
         sqleval.score(db, ordered, ["SELECT a FROM t"])[0]["exec_accuracy"] == 0.0
     )  # ORDER BY: order matters
     assert sqleval.score(db, ordered[:1], ["SELECT a FROM t ORDER BY a"])[0]["exec_accuracy"] == 1.0
+
+
+def test_assumed_gpu_bandwidth_is_used_and_flagged_when_not_measured():
+    h = hier(vram_bw=None)
+    h.vram.bandwidth_gbps = None
+    tps, why = bench.estimate_decode_tps(h, 0.36, "4bit")
+    assert tps > 100 and "ASSUMED" in why  # a GPU is present: do not fall back to CPU speed
+    cpu, why2 = bench.estimate_decode_tps(hier(vram_gb=0), 0.36, "4bit")
+    assert cpu < tps and "CPU only" in why2

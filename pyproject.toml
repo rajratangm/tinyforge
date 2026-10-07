@@ -5,8 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinyforge"
 version = "0.1.0"
-description = "Train, evaluate and serve small LLMs on modest GPUs - CLI, API and web UI."
+description = "Local-first fine-tuning toolkit: hardware-aware planning, data checks, training beyond VRAM, benchmarks and serving with guardrails."
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "tinyforge contributors" }]
+keywords = ["llm", "fine-tuning", "lora", "qlora", "gguf", "llama.cpp", "local", "gpu"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "numpy>=1.26",
   "pydantic>=2.6",
@@ -18,6 +34,7 @@ dependencies = [
   "psutil>=5.9",
   "pyyaml>=6",
   "jsonschema>=4.20",
+  "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +45,12 @@ jax = ["jax[cuda12]; platform_system == 'Linux'"]
 aws = ["boto3>=1.34"]
 docs = ["markitdown[pdf,docx,pptx,xlsx]>=0.1"]
 bench = ["lm-eval>=0.4"]
+all = ["tinyforge[finetune,docs,bench]"]
+
+[project.urls]
+Homepage = "https://github.com/rajratangm/tinyforge"
+Issues = "https://github.com/rajratangm/tinyforge/issues"
+Changelog = "https://github.com/rajratangm/tinyforge/blob/main/CHANGELOG.md"
 
 [project.scripts]
 tinyforge = "tinyforge.cli:main"
@@ -49,6 +72,8 @@ select = ["E", "F", "I", "B", "UP"]
 "src/tinyforge/modelcard.py" = ["E501"]  # prose strings
 "src/tinyforge/memtiers.py" = ["E501"]  # long explanatory strings
 "src/tinyforge/methods.py" = ["E501"]  # prose strings
+"src/tinyforge/telemetry.py" = ["E501"]  # prose strings
+"src/tinyforge/engines.py" = ["E501"]  # prose strings
 "tests/test_modelcard.py" = ["E501"]
 
 [tool.pytest.ini_options]

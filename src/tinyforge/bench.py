@@ -12,6 +12,7 @@ Sample sizes are sub-samples: a 100-item MMLU slice has roughly +-5 points of no
 tuned on the SAME items and treat small differences as noise. Benchmarks measure what they measure: a tuned
 SQL model should not be expected to move MMLU; use them to catch forgetting, not to show gains.
 """
+
 from __future__ import annotations
 
 import shlex
@@ -22,6 +23,7 @@ from .memtiers import GB, NF4_BYTES_PER_PARAM, Hierarchy
 
 PREFILL_MULT = 8.0  # assumed prefill tok/s = this x decode tok/s (flagged as an assumption)
 OVERHEAD_S_PER_ITEM = 0.05  # request/serialisation overhead
+ASSUMED_VRAM_BW_GBPS = 150.0  # used only when the GPU bandwidth was not measured (measured here: 151 GB/s)
 
 
 @dataclass(frozen=True)
@@ -177,15 +179,21 @@ def estimate_decode_tps(h: Hierarchy, params_b: float, quant: str) -> tuple[floa
     GPU measured 10-18 tok/s; this model predicts ~10.
     """
     wbytes = model_bytes(params_b, quant)
-    vram_bw = (h.vram.bandwidth_gbps if h.vram and h.vram.bandwidth_gbps else 0) * 1e9
     ram_bw = (h.ram.bandwidth_gbps or 10.0) * 1e9
-    if not h.vram or not vram_bw:
+    if not h.vram:
         return ram_bw / wbytes, "CPU only: RAM bandwidth / model size"
+    assumed = not h.vram.bandwidth_gbps
+    vram_bw = (h.vram.bandwidth_gbps or ASSUMED_VRAM_BW_GBPS) * 1e9
     usable = max(0.0, h.vram.capacity_gb * GB * 0.9 - 0.5 * GB)  # leave room for KV cache and compute buffers
     gpu_frac = min(1.0, usable / wbytes)
     per_token = gpu_frac * wbytes / vram_bw + (1 - gpu_frac) * wbytes / ram_bw
     how = "all on GPU" if gpu_frac >= 1 else f"{gpu_frac:.0%} of weights on GPU, rest streamed from RAM"
-    return 1.0 / per_token, f"{how}: bandwidth model"
+    note = (
+        f"GPU bandwidth ASSUMED {ASSUMED_VRAM_BW_GBPS:g} GB/s (install PyTorch to measure)"
+        if assumed
+        else "bandwidth model"
+    )
+    return 1.0 / per_token, f"{how}: {note}"
 
 
 def item_seconds(b: Benchmark, decode_tps: float) -> float:

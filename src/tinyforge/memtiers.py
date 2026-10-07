@@ -226,6 +226,23 @@ def measure_disk_gbps(path: Path, size_mb: int = 512) -> tuple[float | None, flo
 
 # ------------------------------------------------------------------ the hierarchy
 
+
+def _vram_from_nvidia_smi() -> Tier | None:
+    """GPU 0 capacity/free from nvidia-smi. Bandwidth is NOT measured here (needs PyTorch), so it stays None."""
+    import shutil
+
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout.strip().splitlines()[0]
+        name, total, free = (x.strip() for x in out.split(","))
+        return Tier("vram", name, round(float(total) / 1024, 2), round(float(free) / 1024, 2), None, False,
+                    ["read from nvidia-smi; install PyTorch to measure bandwidth"])
+    except Exception:
+        return None
+
 def probe_hierarchy(scratch: Path = Path("runs"), measure: bool = True) -> Hierarchy:
     vm = psutil.virtual_memory()
     sw = psutil.swap_memory()
@@ -243,6 +260,8 @@ def probe_hierarchy(scratch: Path = Path("runs"), measure: bool = True) -> Hiera
                         ["capacity includes what the desktop compositor already uses on a laptop"])
     except Exception:
         pass
+    if vram is None:  # PyTorch missing (fresh install): read the GPU from nvidia-smi so planning still sees it
+        vram = _vram_from_nvidia_smi()
 
     ram_bw = measure_ram_copy_gbps() if measure else None
     ram = Tier("ram", ddr_description() or "DRAM", round(vm.total / GB, 1), round(vm.available / GB, 1), ram_bw,
