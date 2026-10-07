@@ -1,0 +1,60 @@
+# Alert and SLO recording rules. Metric names come from src/tinyforge/metrics.py and internal/agent/metrics.go.
+# Tested with `promtool test rules rules_test.yml` (run in CI-less form via the prom/prometheus image).
+groups:
+  - name: tinyforge-slo
+    rules:
+      # SLI: share of finished jobs that completed successfully. Interrupted jobs are excluded (restart, not a failure).
+      - record: tinyforge:job_success_ratio:30d
+        expr: |
+          sum(tinyforge_job_duration_seconds_count{status="done"})
+          / clamp_min(sum(tinyforge_job_duration_seconds_count{status=~"done|failed"}), 1)
+
+  - name: tinyforge-alerts
+    rules:
+      - alert: TinyforgeApiDown
+        expr: up{job="tinyforge"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "tinyforge API is not scrapable"
+          runbook: "docs/runbook.md#api-refuses-to-start--returns-503-api-token-not-configured"
+      - alert: TinyforgeQueueBacklog
+        expr: tinyforge_queue_depth > 10
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: "More than 10 jobs queued for 30 minutes (single running job: the queue is not draining)"
+      - alert: TinyforgeJobsInterrupted
+        expr: increase(tinyforge_jobs{status="interrupted"}[1h]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: "Jobs were interrupted (restart or crash); resubmit them"
+          runbook: "docs/runbook.md#job-shows-interrupted-after-a-restart"
+
+  - name: node
+    rules:
+      - alert: ForgeAgentDown
+        expr: forgectl_agent_up == 0 or up{job="forgectl-agent"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations: { summary: "node agent {{ $labels.instance }} is down" }
+      - alert: GpuHot
+        expr: forgectl_node_gpu_temperature_celsius > 85
+        for: 5m
+        labels: { severity: ticket }
+        annotations: { summary: "GPU {{ $labels.gpu }} above 85C for 5m (check cooling / power cap)" }
+      - alert: GpuMemoryNearFull
+        expr: forgectl_node_gpu_memory_used_bytes / forgectl_node_gpu_memory_total_bytes > 0.97
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "GPU {{ $labels.gpu }} memory above 97% for 10m (OOM risk)" }
+      - alert: DoctorReportStale
+        expr: forgectl_doctor_report_age_seconds > 3600
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "node health report older than 1h" }
+      - alert: DoctorErrors
+        expr: forgectl_doctor_findings{severity="error"} > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations: { summary: "forgectl doctor reports errors on {{ $labels.instance }}" }

@@ -1,0 +1,25 @@
+# Kyverno: only admit tinyforge images signed by this repo's release workflow (keyless Sigstore).
+# Requires Kyverno installed in the cluster. NOT yet applied anywhere: start in Audit, move to Enforce after the
+# first signed release exists (see .github/workflows/release.yml).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: tinyforge-verify-image-signature
+spec:
+  validationFailureAction: Audit
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: verify-signature
+      match:
+        any:
+          - resources: { kinds: [Pod] }
+      verifyImages:
+        - imageReferences: ["ghcr.io/rajratangm/tinyforge*"]
+          mutateDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subjectRegExp: "https://github.com/rajratangm/tinyforge/.github/workflows/release.yml@refs/tags/v.*"
+                    rekor: { url: https://rekor.sigstore.dev }

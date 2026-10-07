@@ -1,0 +1,34 @@
+rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'tinyforge_queue_depth'
+        values: '12+0x40'
+      - series: 'forgectl_node_gpu_temperature_celsius{gpu="0"}'
+        values: '90+0x10'
+      - series: 'tinyforge_job_duration_seconds_count{status="done"}'
+        values: '9+0x5'
+      - series: 'tinyforge_job_duration_seconds_count{status="failed"}'
+        values: '1+0x5'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: TinyforgeQueueBacklog
+        exp_alerts:
+          - exp_labels: { severity: ticket }
+            exp_annotations:
+              summary: "More than 10 jobs queued for 30 minutes (single running job: the queue is not draining)"
+      - eval_time: 3m
+        alertname: TinyforgeQueueBacklog
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GpuHot
+        exp_alerts:
+          - exp_labels: { severity: ticket, gpu: "0" }
+            exp_annotations: { summary: "GPU 0 above 85C for 5m (check cooling / power cap)" }
+    promql_expr_test:
+      - expr: tinyforge:job_success_ratio:30d
+        eval_time: 2m
+        exp_samples:
+          - labels: 'tinyforge:job_success_ratio:30d'
+            value: 0.9
