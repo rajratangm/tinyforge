@@ -113,6 +113,35 @@ def data_prepare(
     raise typer.Exit(1 if rep.has_errors else 0)
 
 
+@data_app.command("ingest")
+def data_ingest(
+    paths: Annotated[list[Path], typer.Argument(help="Files/folders: txt, md, html, pdf*.")],
+    out: Path = Path("data/docs.jsonl"),
+    chunk_words: int = 300,
+    min_words: int = 20,
+    dedupe_threshold: float = 0.8,
+    as_json: JsonOpt = False,
+) -> None:
+    """Documents -> cleaned, chunked, de-duplicated text JSONL (step 1 of making training data)."""
+    import dataclasses
+
+    from . import etl
+
+    chunks, meta, rep = etl.ingest(paths, chunk_words, min_words, dedupe_threshold)
+    if chunks:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", encoding="utf-8") as f:
+            for c in chunks:
+                f.write(json.dumps(dataclasses.asdict(c), ensure_ascii=False) + "\n")
+        meta["out"] = str(out)
+    if as_json:
+        print(json.dumps({"meta": meta, "diagnostics": rep.to_list()}))
+    else:
+        console.print(meta)
+        _show(rep.to_list())
+    raise typer.Exit(1 if rep.has_errors else 0)
+
+
 @app.command()
 def plan(
     preset: str = "micro", block_size: int = 256, batch_size: int = 16, grad_accum: int = 2,
