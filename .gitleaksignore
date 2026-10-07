@@ -1,0 +1,2 @@
+# Test fixture: a made-up JWT used to test the PII scanner (tests/test_pii.py). Not a credential.
+ec733763526a6f1d5f10698bf0c0f40a7bad3788:tests/test_pii.py:jwt:28
