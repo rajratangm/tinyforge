@@ -324,7 +324,7 @@ def ft_task_eval(
         t.add_column("base (raw)")
         t.add_column("base (instructed)")
         t.add_column("tuned")
-        for k in ("strict_em", "lenient_em", "valid"):
+        for k in ("strict_em", "lenient_em", "valid", "exec_acc"):
             t.add_row(k, f"{res['base_raw_prompt'][k]:.1%}", f"{res['base_instructed'][k]:.1%}",
                       f"{res['tuned'][k]:.1%}")
         console.print(t)
@@ -332,6 +332,16 @@ def ft_task_eval(
         _show(res["diagnostics"])
         console.print("[green]PASSED[/]" if res["passed"] else "[bold red]FAILED[/]")
     raise typer.Exit(0 if res["passed"] else 1)
+
+
+@ft_app.command("card")
+def ft_card(run_dir: Path = Path("runs/ft"), out: Path | None = None) -> None:
+    """Write a model card (README.md) from the run's own config and eval results."""
+    from . import modelcard
+
+    dest = out or run_dir / "MODEL_CARD.md"
+    dest.write_text(modelcard.render(run_dir), encoding="utf-8")
+    console.print(f"wrote {dest}")
 
 
 @ft_app.command("generate")
