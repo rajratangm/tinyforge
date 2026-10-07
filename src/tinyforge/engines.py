@@ -15,6 +15,7 @@ Limits: the engine does not coordinate with training jobs for the GPU (the route
 while a job is running); a crashed server is restarted on the next request, not mid-request; `/v1/models`
 reports the GGUF file name, not the original Hugging Face id.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -46,8 +47,14 @@ class ProxyBackend:
 
     max_concurrency = 1
 
-    def __init__(self, base_url: str, model: str = "", api_key: str = "", name: str = "upstream",
-                 timeout: float = 600.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "",
+        api_key: str = "",
+        name: str = "upstream",
+        timeout: float = 600.0,
+    ):
         self.base_url, self.model = base_url.rstrip("/"), model
         self.api_key, self.name, self.timeout = api_key, name, timeout
 
@@ -57,10 +64,16 @@ class ProxyBackend:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-    def stream(self, messages: list[dict], max_tokens: int, temperature: float,
-               top_p: float) -> Iterator[str]:
-        body = {"messages": messages, "max_tokens": max_tokens, "temperature": temperature, "top_p": top_p,
-                "stream": True}
+    def stream(
+        self, messages: list[dict], max_tokens: int, temperature: float, top_p: float
+    ) -> Iterator[str]:
+        body = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "stream": True,
+        }
         if self.model:
             body["model"] = self.model
         try:
@@ -86,8 +99,9 @@ class ProxyBackend:
 
     def count_tokens(self, text: str) -> int:
         try:
-            r = httpx.post(f"{self._url()}/tokenize", json={"content": text}, headers=self._headers(),
-                           timeout=10)
+            r = httpx.post(
+                f"{self._url()}/tokenize", json={"content": text}, headers=self._headers(), timeout=10
+            )
             r.raise_for_status()
             return len(r.json()["tokens"])
         except Exception:  # noqa: BLE001 - usage numbers must never fail a request
@@ -99,8 +113,16 @@ def free_vram_bytes() -> int:
     if not exe:
         return 0
     try:
-        out = subprocess.run([exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
+        out = (
+            subprocess.run(
+                [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
         return int(out[0]) * 1024 * 1024
     except Exception:  # noqa: BLE001
         return 0
@@ -127,8 +149,34 @@ def _free_port() -> int:
 
 
 class LlamaCppBackend(ProxyBackend):
-    def __init__(self, model: Path, lora: Path | None = None, server_bin: list[str] | None = None,
-                 ngl: int | str = "auto", ctx: int = 2048, parallel: int = 2, startup_timeout: float = 240.0):
+    def __init__(
+        self,
+        model: Path,
+        lora: Path | None = None,
+        server_bin: list[str] | None = None,
+        ngl: int | str = "auto",
+        ctx: int = 2048,
+        parallel: int = 2,
+        startup_timeout: float = 240.0,
+        flash_attn: str = "auto",
+        kv_type: str = "f16",
+        speculative: str = "none",
+        draft_model: Path | None = None,
+    ):
+        """Inference techniques (all optional, all checked by `llama-server` itself):
+        flash_attn auto|on|off; kv_type f16|q8_0|q4_0 (quantised KV cache: ~half/quarter the cache memory, slight
+        quality cost; quantised V needs flash attention); speculative none|ngram|draft (n-gram guesses the next tokens
+        from the text so far and needs no extra model; draft uses a small draft_model GGUF of the same family)."""
+        if flash_attn not in ("auto", "on", "off"):
+            raise ValueError("flash_attn must be auto, on or off")
+        if kv_type not in ("f16", "q8_0", "q4_0"):
+            raise ValueError("kv_type must be f16, q8_0 or q4_0")
+        if speculative not in ("none", "ngram", "draft"):
+            raise ValueError("speculative must be none, ngram or draft")
+        if speculative == "draft" and not draft_model:
+            raise ValueError("speculative=draft needs a draft_model GGUF")
+        self.flash_attn, self.kv_type, self.speculative = flash_attn, kv_type, speculative
+        self.draft_model = Path(draft_model) if draft_model else None
         self.model_path, self.lora_path = Path(model), Path(lora) if lora else None
         self.server_bin, self.ngl, self.ctx, self.parallel = server_bin, ngl, ctx, max(1, parallel)
         self.startup_timeout = startup_timeout
@@ -137,8 +185,9 @@ class LlamaCppBackend(ProxyBackend):
         self.proc: subprocess.Popen | None = None
         self.log_path = Path(tempfile.gettempdir()) / f"tinyforge-llama-{os.getpid()}.log"
         self._lock = threading.Lock()
-        super().__init__("", api_key=secrets.token_urlsafe(24),
-                         name=self.model_path.stem + ("+lora" if lora else ""))
+        super().__init__(
+            "", api_key=secrets.token_urlsafe(24), name=self.model_path.stem + ("+lora" if lora else "")
+        )
         atexit.register(self.stop)
 
     def _url(self) -> str:
@@ -160,12 +209,53 @@ class LlamaCppBackend(ProxyBackend):
         if ngl == "auto":
             ngl = choose_ngl(self.model_path.stat().st_size, free_vram_bytes())
         cmd = (self.server_bin or self.locate_server()) + [
-            "-m", str(self.model_path), "--host", "127.0.0.1", "--port", str(port),
-            "-c", str(self.ctx * self.parallel), "-np", str(self.parallel), "-ngl", str(ngl),
-            "--api-key", self.api_key, "--no-webui"]
+            "-m",
+            str(self.model_path),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "-c",
+            str(self.ctx * self.parallel),
+            "-np",
+            str(self.parallel),
+            "-ngl",
+            str(ngl),
+            "--api-key",
+            self.api_key,
+            "--no-webui",
+            "--flash-attn",
+            self.flash_attn,
+        ]
+        if self.kv_type != "f16":
+            cmd += ["--cache-type-k", self.kv_type, "--cache-type-v", self.kv_type]
+        if self.speculative == "ngram":
+            cmd += ["--spec-type", "ngram-mod"]
+        elif self.speculative == "draft":
+            cmd += ["--spec-type", "draft-simple", "--spec-draft-model", str(self.draft_model)]
         if self.lora_path:
             cmd += ["--lora", str(self.lora_path)]
         return cmd
+
+    def telemetry_info(self) -> dict:
+        """What the dashboard needs: KV-cache math from the GGUF header, slots, and the engine process id."""
+        from .telemetry import kv_info_from_gguf
+
+        src = os.environ.get("TINYFORGE_LLAMACPP_SRC", "")
+        gguf_py = (
+            Path(src) / "gguf-py"
+            if src
+            else next((ROOT / "tools" / "llama.cpp" / "src").glob("llama.cpp-*/gguf-py"), None)
+        )
+        kv = kv_info_from_gguf(self.model_path, gguf_py, self.kv_type, self.kv_type)
+        return {
+            "name": self.name,
+            "kind": "llamacpp",
+            "kv": kv,
+            "ctx_alloc_tokens": self.ctx * self.parallel,
+            "max_concurrency": self.parallel,
+            "pid_fn": lambda: self.proc.pid if self.proc is not None and self.proc.poll() is None else None,
+        }
 
     def _ensure(self) -> None:
         with self._lock:
@@ -222,8 +312,15 @@ def make_backend(env: dict | None = None, default=None):
             raise ValueError("TINYFORGE_ENGINE=llamacpp needs TINYFORGE_GGUF (path to the base GGUF)")
         lora = e.get("TINYFORGE_LORA_GGUF", "").strip() or None
         ngl = e.get("TINYFORGE_NGL", "auto").strip()
-        return LlamaCppBackend(Path(gguf), Path(lora) if lora else None,
-                               ngl=ngl if ngl == "auto" else int(ngl),
-                               ctx=int(e.get("TINYFORGE_CTX", "2048")),
-                               parallel=int(e.get("TINYFORGE_PARALLEL", "2")))
+        return LlamaCppBackend(
+            Path(gguf),
+            Path(lora) if lora else None,
+            ngl=ngl if ngl == "auto" else int(ngl),
+            ctx=int(e.get("TINYFORGE_CTX", "2048")),
+            parallel=int(e.get("TINYFORGE_PARALLEL", "2")),
+            flash_attn=e.get("TINYFORGE_FLASH_ATTN", "auto").strip(),
+            kv_type=e.get("TINYFORGE_KV_TYPE", "f16").strip(),
+            speculative=e.get("TINYFORGE_SPECULATIVE", "none").strip(),
+            draft_model=Path(e["TINYFORGE_DRAFT_GGUF"]) if e.get("TINYFORGE_DRAFT_GGUF") else None,
+        )
     raise ValueError(f"TINYFORGE_ENGINE must be hf or llamacpp, got {engine!r}")

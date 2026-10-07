@@ -1,0 +1,87 @@
+{
+  "model": "Qwen2.5-3B-Instruct Q4_K_M (llama.cpp b11380), RTX 3050 Ti 4 GB, all layers on GPU",
+  "prompt": "CSV rows -> JSON array (structured extraction; output copies tokens from the prompt), 300 max tokens, greedy",
+  "variants": {
+    "baseline (fa auto, f16 KV)": {
+      "tok_per_s_median": 54.5,
+      "tok_per_s_all": [
+        55.0,
+        54.4,
+        54.5
+      ],
+      "completion_tokens": 300,
+      "vram_gb": 2.11,
+      "kv_bytes_per_token": 36864.0,
+      "kv_alloc_mb": 144.0,
+      "same_text_as_baseline": true,
+      "stable_across_runs": true
+    },
+    "flash-attn off": {
+      "tok_per_s_median": 50.3,
+      "tok_per_s_all": [
+        50.3,
+        50.7,
+        49.3
+      ],
+      "completion_tokens": 300,
+      "vram_gb": 2.2,
+      "kv_bytes_per_token": 36864.0,
+      "kv_alloc_mb": 144.0,
+      "same_text_as_baseline": false,
+      "stable_across_runs": true
+    },
+    "KV cache q8_0": {
+      "tok_per_s_median": 52.6,
+      "tok_per_s_all": [
+        52.6,
+        52.6,
+        52.5
+      ],
+      "completion_tokens": 300,
+      "vram_gb": 2.05,
+      "kv_bytes_per_token": 19584.0,
+      "kv_alloc_mb": 76.5,
+      "same_text_as_baseline": false,
+      "stable_across_runs": true
+    },
+    "n-gram speculation": {
+      "tok_per_s_median": 129.1,
+      "tok_per_s_all": [
+        55.0,
+        129.4,
+        129.1
+      ],
+      "completion_tokens": 300,
+      "vram_gb": 2.11,
+      "kv_bytes_per_token": 36864.0,
+      "kv_alloc_mb": 144.0,
+      "same_text_as_baseline": true,
+      "stable_across_runs": true
+    },
+    "KV q8_0 + n-gram": {
+      "tok_per_s_median": 124.7,
+      "tok_per_s_all": [
+        124.7,
+        122.2,
+        125.2
+      ],
+      "completion_tokens": 300,
+      "vram_gb": 2.05,
+      "kv_bytes_per_token": 19584.0,
+      "kv_alloc_mb": 76.5,
+      "same_text_as_baseline": false,
+      "stable_across_runs": true
+    }
+  },
+  "reading": [
+    "flash attention: ~8% faster than off (54.5 vs 50.3 tok/s); output text differs slightly from the other kernel path",
+    "KV cache q8_0: allocation halves (144 -> 76.5 MB at 4096 ctx; 36.0 -> 19.1 KiB/token) at ~3.5% lower speed here; output text changed vs f16 (greedy decoding is sensitive to the small numerical change). Worth it when the KV cache is the memory problem (long context, many slots), not for a 3B model with 144 MB of cache",
+    "n-gram speculation: lossless (identical text to baseline) and 129 tok/s on the repeated requests, BUT the first measured request ran at 55.0 tok/s, equal to the baseline: the speedup appears once the same or similar output has already been seen in the session. Expect gains for repeated/templated outputs (RAG, extraction, SQL patterns), not for a first-time generation"
+  ],
+  "caveats": [
+    "one model (3B Q4_K_M), one prompt, 3 timed runs per setting, greedy decoding; speeds include prompt processing",
+    "n-gram numbers are inflated by repetition of an identical request (see reading)",
+    "a draft-model speculation run was not measured (no small same-family GGUF was prepared)",
+    "text differences are with respect to the f16-KV, flash-attn-auto baseline; they were not scored for correctness"
+  ]
+}

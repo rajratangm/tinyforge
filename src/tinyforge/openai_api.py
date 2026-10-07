@@ -99,7 +99,8 @@ def apply_stop(deltas: Iterator[str], stops: list[str]) -> Iterator[tuple[str, b
 def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                  busy: Callable[[], bool] = lambda: False,
                  input_filters: list[Callable[[list[dict]], None]] | None = None,
-                 output_filters: list[Callable[[str], str]] | None = None) -> APIRouter:
+                 output_filters: list[Callable[[str], str]] | None = None,
+                 on_request: Callable[[dict], None] | None = None) -> APIRouter:
     router = APIRouter(prefix="/v1", dependencies=[Depends(auth)])
     slots, inflight = threading.Condition(), [0]
 
@@ -156,6 +157,19 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                         "rate_limit_error", "busy",
                         {"Retry-After": "2"})
         stops = [req.stop] if isinstance(req.stop, str) else list(req.stop or [])[:4]
+        started = time.monotonic()
+
+        def report(text: str) -> None:
+            """Tell the host (telemetry) how big this request was; never let that break the response."""
+            if on_request is None:
+                return
+            try:
+                on_request({"prompt_tokens": backend.count_tokens("\n".join(m["content"] for m in msgs)),
+                            "completion_tokens": backend.count_tokens(text),
+                            "seconds": time.monotonic() - started, "model": backend.name,
+                            "stream": req.stream})
+            except Exception:  # noqa: BLE001
+                pass
         cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
         prompt_text = "\n".join(m["content"] for m in msgs)
 
@@ -197,6 +211,7 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
             finally:
                 release()
             n_out = backend.count_tokens(text)
+            report(text)
             if req.stream:  # buffered path: replay the filtered text as SSE
                 return StreamingResponse(replay(text, finish_reason(stopped, n_out)),
                                          media_type="text/event-stream",
@@ -210,12 +225,14 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
         def sse() -> Iterator[str]:
             try:
                 yield chunk({"role": "assistant", "content": ""})
-                n, stopped = 0, False
+                n, stopped, parts = 0, False, []
                 for text, hit in deltas():
                     stopped = stopped or hit
                     if text:
                         n += 1
+                        parts.append(text)
                         yield chunk({"content": text})
+                report("".join(parts))
                 yield chunk({}, finish_reason(stopped, n))
                 yield "data: [DONE]\n\n"
             except UpstreamError as e:
@@ -260,6 +277,15 @@ class HFBackend:
                        load_tokenizer(cfg.base_model), hw.device)
             self.name = f"{cfg.base_model}+adapter"
         return self._m
+
+    def telemetry_info(self) -> dict:
+        """KV-cache math from the loaded model's config; the cache grows with the tokens in context."""
+        from .telemetry import kv_info_from_hf_config
+
+        kv = None
+        if self._m is not None:
+            kv = kv_info_from_hf_config(self._m[0].config.to_dict())
+        return {"name": self.name, "kind": "hf", "kv": kv, "ctx_alloc_tokens": 0, "max_concurrency": 1}
 
     def count_tokens(self, text: str) -> int:
         _, tok, _ = self._load()

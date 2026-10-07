@@ -22,7 +22,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -54,8 +54,11 @@ def require_auth(request: Request) -> None:
         return
     token = os.environ.get("TINYFORGE_API_TOKEN", "")
     if not token:
-        raise HTTPException(503, "API token not configured: set TINYFORGE_API_TOKEN "
-                                 "(or TINYFORGE_AUTH=off for local development only).")
+        raise HTTPException(
+            503,
+            "API token not configured: set TINYFORGE_API_TOKEN "
+            "(or TINYFORGE_AUTH=off for local development only).",
+        )
     scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
     supplied = supplied.strip()
     # Only requests that present a bearer token count as guesses; a request with no token (how the UI finds
@@ -63,8 +66,11 @@ def require_auth(request: Request) -> None:
     guess = scheme.lower() == "bearer" and bool(supplied)
     client = request.client.host if request.client else "unknown"
     if guess and (retry := _auth_limiter.blocked(client)) is not None:
-        raise HTTPException(429, "Too many failed authentication attempts; try again later.",
-                            headers={"Retry-After": str(retry)})
+        raise HTTPException(
+            429,
+            "Too many failed authentication attempts; try again later.",
+            headers={"Retry-After": str(retry)},
+        )
     # compare as bytes: compare_digest raises on non-ASCII str, and runs in constant time
     if not guess or not hmac.compare_digest(supplied.encode(), token.encode()):
         if guess:
@@ -101,8 +107,12 @@ _MEM_LOGS = 20  # finished jobs whose logs stay in memory; older ones are served
 class JobManager:
     """Runs queued jobs one at a time on a worker thread. Durable state lives in the JobStore."""
 
-    def __init__(self, store: JobStore, stage_runner: StageRunner | None = None,
-                 before_job: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        stage_runner: StageRunner | None = None,
+        before_job: Callable[[], None] | None = None,
+    ) -> None:
         self.store = store
         self._run_stage = stage_runner or self._run_subprocess
         self._before_job = before_job or _release_gpu
@@ -160,6 +170,7 @@ class JobManager:
         status, code = "done", 0
         try:
             with open(self.store.log_path(job_id), "a", encoding="utf-8") as fh:
+
                 def emit(line: str) -> None:
                     log.append(line)
                     fh.write(line + "\n")
@@ -186,8 +197,13 @@ class JobManager:
                 self.logs.pop(old, None)
 
     def _run_subprocess(self, job_id: str, argv: list[str], emit: Callable[[str], None]) -> int:
-        proc = subprocess.Popen([sys.executable, "-m", "tinyforge", *argv], cwd=ROOT,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "tinyforge", *argv],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         self._proc = proc
         for line in proc.stdout:  # type: ignore[union-attr]
             emit(line.rstrip())
@@ -215,8 +231,12 @@ def get_manager() -> JobManager:
         return _manager
 
 
-def configure(db_path: Path, stage_runner: StageRunner | None = None,
-              before_job: Callable[[], None] | None = None, autostart: bool = True) -> JobManager:
+def configure(
+    db_path: Path,
+    stage_runner: StageRunner | None = None,
+    before_job: Callable[[], None] | None = None,
+    autostart: bool = True,
+) -> JobManager:
     """Replace the manager (used by tests; also a hook for embedding). The previous one is stopped."""
     global _manager
     with _manager_lock:
@@ -235,15 +255,21 @@ def _busy() -> bool:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     get_manager()  # recover interrupted jobs and resume the queue at server start, not at first request
+    telemetry.start()
     yield
+    telemetry.stop()
     if _manager is not None:
         _manager.stop()
 
 
-app = FastAPI(title="tinyforge", version=__version__, lifespan=lifespan,
-              docs_url="/docs" if _net.docs_enabled else None,
-              redoc_url="/redoc" if _net.docs_enabled else None,
-              openapi_url="/openapi.json" if _net.docs_enabled else None)
+app = FastAPI(
+    title="tinyforge",
+    version=__version__,
+    lifespan=lifespan,
+    docs_url="/docs" if _net.docs_enabled else None,
+    redoc_url="/redoc" if _net.docs_enabled else None,
+    openapi_url="/openapi.json" if _net.docs_enabled else None,
+)
 _ui_page = UI_DIR / "index.html"
 install_net_security(app, _net, _ui_page.read_bytes() if _ui_page.is_file() else None)
 
@@ -263,17 +289,79 @@ class GenRequest(BaseModel):
     int8: bool = False
 
 
+@api.get("/telemetry")
+def get_telemetry():
+    """Memory over time, KV-cache math and per-request records for the dashboard."""
+    _register_engine()
+    return telemetry.snapshot()
+
+
 @api.get("/hardware")
 def get_hardware():
+    from . import deps
+
     hw = hardware.probe()
-    return {"hardware": hw.to_dict(), "diagnostics": hardware.diagnose(hw).to_list()}
+    return {
+        "hardware": hw.to_dict(),
+        "diagnostics": hardware.diagnose(hw).to_list(),
+        "components": deps.check_components(),
+    }
+
+
+def _backends_installed() -> tuple[str, ...]:
+    from . import deps
+
+    have = {c["name"] for c in deps.check_components() if c["installed"]}
+    return tuple(b for b, need in (("native", "finetune"), ("soup", "soup")) if need in have)
+
+
+@api.get("/methods/suggest")
+def api_methods_suggest(
+    params_b: float = Query(8.0, gt=0.01, le=1000),
+    data: str = Query("sft", pattern="^(sft|preference)$"),
+    prefer: str = Query("quality", pattern="^(quality|fit)$"),
+):
+    """Which fine-tuning methods fit this machine for this model size (`tinyforge methods suggest`)."""
+    from . import memtiers, methods
+
+    h = memtiers.probe_hierarchy(measure=False)
+    have = _backends_installed()
+    recs, ctx = methods.recommend_methods(h, params_b, data, have or ("native", "soup"), prefer)
+    ctx["installed_backends"] = list(have)
+    return {"context": ctx, "methods": [r.to_dict() for r in recs]}
+
+
+@api.get("/bench/suggest")
+def api_bench_suggest(
+    params_b: float = Query(8.0, gt=0.01, le=1000),
+    quant: str = Query("4bit", pattern="^(4bit|fp16)$"),
+    goal: str = Query("general", pattern="^(general|forgetting|reasoning|instruction|sql|safety)$"),
+    minutes: float = Query(30.0, ge=1, le=1000),
+    measured_tps: float = Query(0.0, ge=0),
+):
+    """Benchmarks and sample sizes that fit this machine and time budget (see `tinyforge bench suggest`)."""
+    from . import bench, memtiers
+
+    h = memtiers.probe_hierarchy(measure=False)
+    recs, ctx = bench.recommend(h, params_b, quant, minutes, goal, measured_tps or None)
+    return {"context": ctx, "recommendations": [r.to_dict() for r in recs]}
 
 
 @api.post("/jobs/pipeline")
 def start_pipeline(req: TrainRequest):
     data = ["data", "prepare", "--out", "data/tinyshakespeare"]
-    train = ["train", "--preset", req.preset, "--steps", str(req.steps), "--block-size",
-             str(req.block_size), "--run-dir", f"runs/{req.preset}", "--json"]
+    train = [
+        "train",
+        "--preset",
+        req.preset,
+        "--steps",
+        str(req.steps),
+        "--block-size",
+        str(req.block_size),
+        "--run-dir",
+        f"runs/{req.preset}",
+        "--json",
+    ]
     ev = ["eval", "--ckpt", f"runs/{req.preset}/best.pt", "--json"]
     return {"id": get_manager().submit("pipeline", [data, train, ev])}
 
@@ -313,8 +401,11 @@ def ft_generate(req: FTGenRequest):
             cfg = FTConfig.model_validate_json((run_dir / "ft_config.json").read_text())
             hw = hardware.probe()
             base = load_base(cfg.base_model, cfg.quant, hw.bf16_supported, hw.device)
-            _ft_models["m"] = (PeftModel.from_pretrained(base, run_dir / "best"),
-                               load_tokenizer(cfg.base_model), hw.device)
+            _ft_models["m"] = (
+                PeftModel.from_pretrained(base, run_dir / "best"),
+                load_tokenizer(cfg.base_model),
+                hw.device,
+            )
         model, tok, device = _ft_models["m"]
         from .ft_eval import _gen
 
@@ -336,6 +427,7 @@ def job_events(job_id: str):
     job = mgr.store.get(job_id) if len(job_id) == 8 else None
     if not job:
         raise HTTPException(404)
+
     def stream():
         i = 0
         while True:
@@ -371,9 +463,14 @@ def list_runs():
             continue
         ev = d / "eval.json"
         is_ft = (d / "ft_config.json").exists()
-        runs.append({"name": d.name, "kind": "finetune" if is_ft else "scratch",
-                     "has_model": (d / "best").exists() if is_ft else (d / "best.pt").exists(),
-                     "eval": json.loads(ev.read_text()) if ev.exists() else None})
+        runs.append(
+            {
+                "name": d.name,
+                "kind": "finetune" if is_ft else "scratch",
+                "has_model": (d / "best").exists() if is_ft else (d / "best.pt").exists(),
+                "eval": json.loads(ev.read_text()) if ev.exists() else None,
+            }
+        )
     return runs
 
 
@@ -391,12 +488,15 @@ def api_generate(req: GenRequest):
     key = f"{ckpt}:{req.int8}"
     if key not in _models:
         model, _ = load_model(ckpt, hardware.probe().device)
-        _models[key] = (infer.quantize_int8(model) if req.int8 else model,
-                        load_tokenizer(ROOT / "data" / "tinyshakespeare"))
+        _models[key] = (
+            infer.quantize_int8(model) if req.int8 else model,
+            load_tokenizer(ROOT / "data" / "tinyshakespeare"),
+        )
     model, tok = _models[key]
     with _lock:
-        text = infer.generate_text(model, tok, req.prompt, max_new=req.max_new,
-                                   temperature=req.temperature, top_k=req.top_k)
+        text = infer.generate_text(
+            model, tok, req.prompt, max_new=req.max_new, temperature=req.temperature, top_k=req.top_k
+        )
     return {"text": text}
 
 
@@ -406,11 +506,40 @@ from .engines import make_backend  # noqa: E402
 from .guardrails import COUNTS as GUARD_COUNTS  # noqa: E402
 from .guardrails import GuardConfig, build_filters  # noqa: E402
 from .openai_api import HFBackend, build_router  # noqa: E402
+from .telemetry import Telemetry  # noqa: E402
 
 # TINYFORGE_ENGINE=llamacpp swaps the in-process model for a managed llama-server; tests replace this
 _backend = make_backend(os.environ, HFBackend(ROOT / "runs" / "ft"))
 _guard_in, _guard_out = build_filters(GuardConfig.from_env())  # bad env values fail at startup
-app.include_router(build_router(require_auth, lambda: _backend, _busy, _guard_in, _guard_out))
+telemetry = Telemetry()
+
+
+def _on_request(r: dict) -> None:
+    _register_engine()  # so KV figures exist even if nobody has opened the dashboard yet
+    telemetry.record_request(**r)
+
+
+def _register_engine() -> None:
+    """Describe the serving backend to the telemetry (KV-cache math needs its layer/head numbers)."""
+    info = getattr(_backend, "telemetry_info", None)
+    if info is None:
+        return
+    cur = telemetry.engine
+    if cur.get("kv") is not None and cur.get("name") == getattr(_backend, "name", None):
+        return  # already described (the GGUF header read is not free); retry until the KV numbers are known
+    telemetry.set_engine(**info())
+
+
+app.include_router(
+    build_router(
+        require_auth,
+        lambda: _backend,
+        _busy,
+        _guard_in,
+        _guard_out,
+        on_request=_on_request,
+    )
+)
 
 
 _METRICS_JOB_LIMIT = 100_000  # JobStore.list is capped; the table has no retention yet, so counts stop here
@@ -427,9 +556,10 @@ def metrics():
 
     vm = psutil.virtual_memory()
     host = {"ram_total": vm.total, "ram_available": vm.available, "swap_used": psutil.swap_memory().used}
-    return Response(render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:]), host,
-                                    dict(GUARD_COUNTS)),
-                    media_type=METRICS_CONTENT_TYPE)
+    return Response(
+        render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:]), host, dict(GUARD_COUNTS)),
+        media_type=METRICS_CONTENT_TYPE,
+    )
 
 
 @app.get("/healthz")

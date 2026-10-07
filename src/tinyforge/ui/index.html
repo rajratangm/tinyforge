@@ -63,6 +63,28 @@ canvas{width:100%;height:200px}.row{display:flex;gap:8px}.row>*{flex:1}
     <button id="gen">Generate</button><div class="out" id="out"></div>
   </section>
 
+  <section class="card"><h2>Optional components</h2><table id="comps"></table>
+    <div style="color:var(--mut);font-size:12px;margin-top:6px">Missing pieces only matter for the features they unlock.</div></section>
+
+  <section class="card"><h2>What fits this machine</h2>
+    <div class="row"><div><label>Model size (billions)</label><input id="fit_b" type="number" value="8" step="0.5" min="0.1"></div>
+    <div><label>Benchmark goal</label><select id="fit_goal"><option>general</option><option>forgetting</option><option>reasoning</option><option>instruction</option><option>sql</option></select></div>
+    <div><label>Time budget (min)</label><input id="fit_min" type="number" value="30" min="1"></div></div>
+    <button id="fit_go" class="sec">Suggest methods and benchmarks</button>
+    <div id="fit_out" style="margin-top:10px"></div></section>
+
+  <section class="card wide"><h2>Serving and memory</h2>
+    <div id="srv_stats" style="color:var(--mut);margin-bottom:8px">No serving activity yet. Start <code>tinyforge serve</code> and send a request to /v1/chat/completions.</div>
+    <div class="row" style="flex-wrap:wrap">
+      <div style="min-width:320px"><label>GPU / RAM memory over time (GB)</label><canvas id="c_mem" width="560" height="200"></canvas></div>
+      <div style="min-width:320px"><label>KV cache vs tokens in context (MB): line = exact maths, dots = your requests</label><canvas id="c_kv" width="560" height="200"></canvas></div>
+    </div>
+    <div class="row" style="flex-wrap:wrap">
+      <div style="min-width:320px"><label>GPU memory per request (GB) vs tokens in context</label><canvas id="c_req" width="560" height="200"></canvas></div>
+      <div style="min-width:320px"><label>Generation speed per request (tokens/s)</label><canvas id="c_tps" width="560" height="200"></canvas></div>
+    </div>
+    <div id="srv_note" style="color:var(--mut);font-size:12px;margin-top:6px"></div></section>
+
   <section class="card wide"><h2>Log</h2><pre id="log"></pre></section>
 </main>
 <script>
@@ -90,9 +112,10 @@ async function follow(id,onMsg,onEnd){
   onEnd('disconnected')}
 
 async function loadHw(){
-  const {hardware:h,diagnostics}=await api('/api/hardware');
+  const {hardware:h,diagnostics,components}=await api('/api/hardware');
   $('hw').innerHTML=Object.entries(h).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
   $('hwdiag').innerHTML=diagnostics.map(diagHtml).join('');
+  renderComps(components);
 }
 async function loadRuns(){
   const runs=await api('/api/runs');
@@ -155,6 +178,72 @@ $('gen').onclick=async()=>{
 };
 $('run').onchange=syncPlayground;
 $('mode').onchange=()=>{const ft=$('mode').value==='ft';$('ftbox').style.display=ft?'':'none';$('scbox').style.display=ft?'none':''};
+
+// ---------- components, recommendations, serving telemetry ----------
+function renderComps(list){
+  $('comps').innerHTML=(list||[]).map(c=>`<tr><td>${esc(c.name)}</td><td><span class="badge ${c.installed?'pass':'fail'}">${c.installed?'ok':'missing'}</span>
+    <div style="color:var(--mut);font-size:12px">${esc(c.unlocks)}${c.installed?'':' &mdash; <code>'+esc(c.install)+'</code>'}</div></td></tr>`).join('');
+}
+function table(head,rows){return `<table><tr>${head.map(h=>`<td style="color:var(--mut)">${esc(h)}</td>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(x=>`<td style="color:var(--fg)">${x}</td>`).join('')}</tr>`).join('')}</table>`}
+$('fit_go').onclick=async()=>{
+  const b=+$('fit_b').value||8,out=$('fit_out');out.textContent='…';
+  try{
+    const [m,k]=await Promise.all([api(`/api/methods/suggest?params_b=${b}`),api(`/api/bench/suggest?params_b=${b}&goal=${$('fit_goal').value}&minutes=${+$('fit_min').value||30}`)]);
+    const mc=m.context,kc=k.context;
+    out.innerHTML=`<div style="color:var(--mut);font-size:12px">${b}B model on ${mc.vram_gb} GB VRAM, ${mc.free_ram_gb} GB RAM free; backends installed: ${esc((mc.installed_backends||[]).join(', ')||'none')}. Estimates.</div>`+
+      table(['method','fits','backend','~GB'],m.methods.map(r=>[esc(r.name),r.fits?'<span class="badge pass">yes</span>':'<span class="badge fail">no</span>',esc(r.backend),r.need_gb]))+
+      `<div style="color:var(--mut);font-size:12px;margin-top:10px">~${kc.decode_tps} tok/s decode (${esc(kc.decode_tps_basis)}); model fits GPU: ${kc.model_fits_gpu}</div>`+
+      table(['benchmark','runnable','items','~min'],k.recommendations.filter(r=>r.runnable).map(r=>[esc(r.name),'yes',r.limit,r.est_minutes]))+
+      (k.recommendations.some(r=>!r.runnable)?`<div style="color:var(--mut);font-size:12px;margin-top:6px">Not runnable here: ${esc(k.recommendations.filter(r=>!r.runnable).map(r=>r.name).join(', '))} (loglikelihood scoring needs the model resident on the GPU).</div>`:'');
+  }catch(err){out.textContent=err.message}
+};
+
+// Minimal line/scatter chart: series = [{label,color,pts:[[x,y]...],line:bool,dash:bool}]. Axes auto-scale from 0.
+function plot(id,series,xLabel){
+  const c=$(id),x=c.getContext('2d'),W=c.width,H=c.height,L=44,B=22,T=8,R=8;x.clearRect(0,0,W,H);
+  const all=series.flatMap(s=>s.pts);const css=getComputedStyle(document.documentElement);
+  const mut=css.getPropertyValue('--mut').trim()||'#888',line=css.getPropertyValue('--line').trim()||'#333';
+  if(!all.length){x.fillStyle=mut;x.fillText('no data yet',L+8,H/2);return}
+  const xs=all.map(p=>p[0]),ys=all.map(p=>p[1]);
+  const x0=Math.min(0,...xs),x1=Math.max(...xs)||1,y0=0,y1=(Math.max(...ys)||1)*1.1;
+  const px=v=>L+(v-x0)/((x1-x0)||1)*(W-L-R),py=v=>H-B-(v-y0)/((y1-y0)||1)*(H-B-T);
+  x.strokeStyle=line;x.fillStyle=mut;x.lineWidth=1;x.font='11px system-ui';
+  for(let i=0;i<=4;i++){const yv=y0+(y1-y0)*i/4,yy=py(yv);x.beginPath();x.moveTo(L,yy);x.lineTo(W-R,yy);x.stroke();x.fillText(yv>=10?yv.toFixed(0):yv.toFixed(2),4,yy+4)}
+  x.fillText(String(Math.round(x0)),L,H-6);x.fillText(String(Math.round(x1))+(xLabel?' '+xLabel:''),W-R-60,H-6);
+  series.forEach(s=>{
+    x.strokeStyle=s.color;x.fillStyle=s.color;x.lineWidth=2;x.setLineDash(s.dash?[5,4]:[]);
+    if(s.line&&s.pts.length>1){x.beginPath();s.pts.forEach((p,i)=>i?x.lineTo(px(p[0]),py(p[1])):x.moveTo(px(p[0]),py(p[1])));x.stroke()}
+    x.setLineDash([]);if(!s.line)s.pts.forEach(p=>{x.beginPath();x.arc(px(p[0]),py(p[1]),3.5,0,7);x.fill()});
+  });
+  let lx=L+6;series.forEach(s=>{x.fillStyle=s.color;x.fillRect(lx,T+2,10,3);x.fillStyle=mut;x.fillText(s.label,lx+14,T+9);lx+=s.label.length*6+30});
+}
+let telemetryOff=false;
+async function loadTelemetry(){
+  if(telemetryOff||document.visibilityState==='hidden')return;
+  let t;try{t=await fetchTelemetry()}catch{telemetryOff=true;return}
+  const e=t.engine||{},kv=e.kv||{},req=t.requests||[],sm=t.samples||[];
+  const t0=sm.length?sm[0].t:0,rel=v=>Math.round(v-t0);
+  const has=k=>sm.some(s=>s[k]!=null);
+  plot('c_mem',[
+    {label:'GPU used',color:'#6ea8fe',line:true,pts:sm.filter(s=>s.vram_used_gb!=null).map(s=>[rel(s.t),s.vram_used_gb])},
+    {label:'RAM used',color:'#fbbf24',line:true,pts:sm.map(s=>[rel(s.t),s.ram_used_gb])},
+    ...(has('engine_rss_gb')?[{label:'engine process',color:'#4ade80',line:true,pts:sm.filter(s=>s.engine_rss_gb!=null).map(s=>[rel(s.t),s.engine_rss_gb])}]:[])
+  ],'s');
+  const pts=req.filter(r=>r.kv_used_mb!=null).map(r=>[r.context_tokens,r.kv_used_mb]);
+  const ser=[{label:'exact KV size',color:'#6ea8fe',line:true,pts:(t.kv_curve||[]).map(p=>[p.tokens,p.mb])},{label:'your requests',color:'#f87171',line:false,pts:pts}];
+  if(t.kv_alloc_mb&&e.kind==='llamacpp')ser.push({label:'allocated up front',color:'#fbbf24',line:true,dash:true,pts:[[0,t.kv_alloc_mb],[e.ctx_alloc_tokens,t.kv_alloc_mb]]});
+  plot('c_kv',ser,'tokens');
+  plot('c_req',[{label:'GPU used at request end',color:'#6ea8fe',line:false,pts:req.filter(r=>r.vram_used_gb!=null).map(r=>[r.context_tokens,r.vram_used_gb])}],'tokens');
+  plot('c_tps',[{label:'tokens/s',color:'#4ade80',line:true,pts:req.filter(r=>r.tok_per_s!=null).map((r,i)=>[i+1,r.tok_per_s])}],'request #');
+  if(e.name){
+    const last=req[req.length-1];
+    $('srv_stats').innerHTML=`<b>${esc(e.name)}</b> (${esc(e.kind)}) &middot; ${kv.bytes_per_token?(kv.bytes_per_token/1024).toFixed(1)+' KiB of KV cache per token ('+esc(kv.source)+', '+esc(kv.k_type)+' cache)':'KV size unknown until the model is loaded'}`+
+      (t.kv_alloc_mb?` &middot; ${t.kv_alloc_mb} MB reserved`:'')+` &middot; ${req.length} request(s)`+(last&&last.tok_per_s?` &middot; last ${last.tok_per_s} tok/s`:'');
+    $('srv_note').textContent=e.kind==='llamacpp'?'llama.cpp reserves the whole KV buffer at start-up: measured GPU memory stays flat while the used share (dots) grows with the tokens in context.':'This engine grows its KV cache with the tokens in context, so measured GPU memory rises with them.';
+  }
+}
+async function fetchTelemetry(){const r=await fetch('/api/telemetry',{headers:authH()});if(!r.ok)throw new Error(r.status);return r.json()}
+setInterval(loadTelemetry,2000);loadTelemetry();
 loadHw();loadRuns();
 </script>
 </body>
