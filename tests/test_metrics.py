@@ -211,3 +211,12 @@ def test_metrics_reflect_store_and_only_running_job_signals(env):
     _, samples = parse(c.get("/metrics", headers=AUTH).text)
     assert not any(n.startswith(("tinyforge_train_", "tinyforge_val_")) for n in names(samples))
     assert value(samples, "tinyforge_jobs", status="running") == 0
+
+
+def test_host_memory_gauges_rendered_only_when_given():
+    assert "tinyforge_host" not in render("v", [])
+    host = {"ram_total": 16_000_000_000, "ram_available": 4_000_000_000,
+            "swap_used": 1_000_000_000, "junk": "x"}
+    out = render("v", [], host=host)
+    assert "tinyforge_host_ram_available_bytes 4000000000" in out
+    assert "tinyforge_host_swap_used_bytes 1000000000" in out

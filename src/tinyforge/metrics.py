@@ -74,8 +74,12 @@ def latest_train_signals(log_lines: Iterable[str]) -> dict[str, float]:
     return out
 
 
-def render(version: str, jobs: list[dict], running_log: Iterable[str] = ()) -> str:
-    """Build the /metrics body from job rows (JobStore.list) and the running job's in-memory log lines."""
+def render(version: str, jobs: list[dict], running_log: Iterable[str] = (),
+           host: dict[str, float] | None = None) -> str:
+    """Build the /metrics body from job rows (JobStore.list) and the running job's in-memory log lines.
+
+    host: optional memory gauges in bytes (ram_total, ram_available, swap_used). Swap or a collapsing
+    ram_available during offloaded training is the early warning for a 10x slowdown."""
     counts = dict.fromkeys(STATUSES, 0)
     for j in jobs:
         if j["status"] in counts:

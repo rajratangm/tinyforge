@@ -1,0 +1,54 @@
+{
+  "uid": "tinyforge-training",
+  "title": "tinyforge: training and host memory",
+  "tags": ["tinyforge", "training"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Training and validation loss",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "tinyforge_train_loss", "legendFormat": "train" },
+        { "refId": "B", "expr": "tinyforge_val_loss", "legendFormat": "val" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Throughput (tokens/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "tinyforge_train_tok_per_second", "legendFormat": "tok/s" }]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Peak GPU memory reported by job (GB)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "tinyforge_train_peak_mem_gb", "legendFormat": "peak" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Host RAM available vs swap in use",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "tinyforge_host_ram_available_bytes", "legendFormat": "RAM available" },
+        { "refId": "B", "expr": "tinyforge_host_swap_used_bytes", "legendFormat": "swap used" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Jobs by status and queue depth",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "tinyforge_jobs", "legendFormat": "{{status}}" },
+        { "refId": "B", "expr": "tinyforge_queue_depth", "legendFormat": "queued (depth)" }
+      ]
+    }
+  ]
+}

@@ -413,7 +413,11 @@ def metrics():
     jobs = mgr.store.list(_METRICS_JOB_LIMIT)
     running = next((j for j in jobs if j["status"] == "running"), None)
     lines = (mgr.job_log(running["id"]) or []) if running else []
-    return Response(render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:])),
+    import psutil
+
+    vm = psutil.virtual_memory()
+    host = {"ram_total": vm.total, "ram_available": vm.available, "swap_used": psutil.swap_memory().used}
+    return Response(render_metrics(__version__, jobs, list(lines[-LOG_SCAN_LINES:]), host),
                     media_type=METRICS_CONTENT_TYPE)
 
 
