@@ -142,6 +142,33 @@ def data_ingest(
     raise typer.Exit(1 if rep.has_errors else 0)
 
 
+@data_app.command("tabular")
+def data_tabular(
+    csv_path: Path,
+    out: Path = Path("data/tabular.jsonl"),
+    count: int = 500,
+    seed: int = 0,
+    as_json: JsonOpt = False,
+) -> None:
+    """CSV -> text-to-SQL examples whose answers were verified by executing them."""
+    from . import tabular
+
+    t = tabular.load_csv(csv_path)
+    ex, meta = tabular.generate(t, count, seed)
+    if not ex:
+        console.print("[bold red]ERROR[/] no verifiable examples (need a category or number column)")
+        raise typer.Exit(1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as f:
+        for e in ex:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    meta["out"] = str(out)
+    if as_json:
+        print(json.dumps({"meta": meta}))
+    else:
+        console.print(meta)
+
+
 @app.command()
 def plan(
     preset: str = "micro", block_size: int = 256, batch_size: int = 16, grad_accum: int = 2,
