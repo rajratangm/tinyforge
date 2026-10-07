@@ -555,6 +555,33 @@ def ft_pipeline(
     console.print("[bold green]Fine-tuning pipeline complete.[/]")
 
 
+export_app = typer.Typer(help="Export models for other runtimes.")
+app.add_typer(export_app, name="export")
+
+
+@export_app.command("gguf")
+def export_gguf_cmd(
+    base: Annotated[Path, typer.Option(help="Local Hugging Face model folder (safetensors).")],
+    out: Annotated[Path, typer.Option(help="Output folder.")] = Path("out/gguf"),
+    adapter: Annotated[Path | None, typer.Option(help="LoRA adapter folder (e.g. runs/x/best).")] = None,
+    quant: Annotated[str, typer.Option(help="f16 | q8_0 | q4_k_m | q5_k_m | q6_k | q4_0")] = "q4_k_m",
+    keep_f16: Annotated[bool, typer.Option(help="Keep the large f16 intermediate.")] = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Base model (+ optional LoRA adapter) -> GGUF files for llama.cpp (needs the llama.cpp tools)."""
+    from .gguf_export import ExportError, export_gguf
+
+    try:
+        res = export_gguf(base, out, adapter, quant, keep_f16, log=lambda s: typer.echo(s, err=True))
+    except ExportError as e:
+        console.print(f"[bold red]ERROR[/] {escape(str(e))}")
+        raise typer.Exit(1) from e
+    if as_json:
+        print(json.dumps(res))
+    else:
+        console.print(res)
+
+
 @app.command()
 def serve(
     host: str = "127.0.0.1", port: int = 8000,
