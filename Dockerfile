@@ -10,7 +10,7 @@ FROM ${UV_IMAGE} AS uv
 FROM ${CUDA_BASE} AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1 \
-    UV_HTTP_TIMEOUT=900 UV_CONCURRENT_DOWNLOADS=4
+    UV_HTTP_TIMEOUT=900 UV_HTTP_RETRIES=8 UV_CONCURRENT_DOWNLOADS=4
 RUN uv python install 3.12 && uv venv /opt/venv --python 3.12
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
 WORKDIR /src

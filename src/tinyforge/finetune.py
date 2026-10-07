@@ -41,6 +41,7 @@ class FTConfig(BaseModel):
     lora_dropout: float = 0.0  # 0 lets PEFT skip dropout kernels: measured ~40% faster
     quant: str = "auto"  # auto | none | 4bit
     grad_checkpointing: bool = False
+    auto_plan: bool = True  # False: use batch/quant/checkpointing exactly as given (benchmarks, expert use)
     chunked_ce: bool = True  # project only labelled positions through the LM head, in chunks (see memory.py)
     ce_chunk: int = 2048
     eval_interval: int = 50
@@ -259,7 +260,12 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
         emit(e)
 
     hw = hardware.probe()
-    c, rep, _ = plan(c, hw.vram_gb)
+    if c.auto_plan:
+        c, rep, _ = plan(c, hw.vram_gb)
+    else:
+        rep = Report()
+        if c.quant == "auto":
+            c = c.model_copy(update={"quant": "none"})
     for d in rep.to_list():
         event("diagnostic", **d)
     if rep.has_errors:

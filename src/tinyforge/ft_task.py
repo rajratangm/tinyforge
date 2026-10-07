@@ -49,29 +49,38 @@ def sql_valid(query: str, schema: str) -> bool:
         con.close()
 
 
-_LITERAL = re.compile(r"'([^']*)'|\b(\d+(?:\.\d+)?)\b")
+_LITERAL = re.compile(r"'([^']*)'|\"([^\"]*)\"|\b(\d+(?:\.\d+)?)\b")
 _MAX_VM_STEPS = 2_000_000  # abort runaway queries (cross joins on generated rows) instead of hanging the eval
 
 
 def _literals(*queries: str) -> tuple[list[str], list[float]]:
+    """String and numeric literals in the queries. Double-quoted strings count: SQLite treats "x" as a string
+    when no column has that name, and most text-to-SQL gold queries use them."""
     texts, nums = [], []
     for q in queries:
-        for t, n in _LITERAL.findall(q):
+        for single, double, n in _LITERAL.findall(q):
             if n:
                 nums.append(float(n))
-            elif t:
-                texts.append(t)
+            elif single or double:
+                texts.append(single or double)
     return texts, nums
 
 
 def _populate(con: sqlite3.Connection, seed: int, texts: list[str], nums: list[float],
-              rows: int = 30) -> None:
-    """Fill every table with deterministic rows. Values come from the literals the gold query mentions plus
-    a small pool, so WHERE clauses select a non-trivial subset. Execution accuracy is only as strong as
-    this data."""
+              rows: int = 40) -> None:
+    """Fill every table with deterministic rows. Most values come from the literals the gold query mentions
+    (so multi-condition WHERE clauses can select rows), the rest from a small filler pool so queries still
+    discriminate. Execution accuracy is only as strong as this data: see the self-match check in the tests."""
     rng = random.Random(seed)
-    text_pool = (texts or []) + ["alpha", "beta", "gamma", "delta", "x", "y"]
-    num_pool = [int(n) if n == int(n) else n for n in nums] + [0, 1, 2, 5, 10, 25, 50, 100]
+    lit_text = list(texts) + [f"{int(n) if n == int(n) else n}" for n in nums]
+    lit_num = [int(n) if n == int(n) else n for n in nums]
+    for t in texts:  # numeric-looking text literals (e.g. "40") can also populate numeric columns
+        try:
+            lit_num.append(float(t))
+        except ValueError:
+            pass
+    filler_text = ["alpha", "beta", "gamma", "delta", "x", "y"]
+    filler_num = [0, 1, 2, 5, 10, 25, 50, 100]
     tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
     for t in tables:
         cols = con.execute(f'PRAGMA table_info("{t}")').fetchall()
@@ -79,10 +88,9 @@ def _populate(con: sqlite3.Connection, seed: int, texts: list[str], nums: list[f
             vals = []
             for c in cols:
                 ctype = (c[2] or "").upper()
-                if any(k in ctype for k in ("INT", "REAL", "NUM", "FLOA", "DOUB", "DEC")):
-                    vals.append(rng.choice(num_pool))
-                else:
-                    vals.append(str(rng.choice(text_pool)))
+                numeric = any(k in ctype for k in ("INT", "REAL", "NUM", "FLOA", "DOUB", "DEC"))
+                lits, filler = (lit_num, filler_num) if numeric else (lit_text, filler_text)
+                vals.append(rng.choice(lits) if lits and rng.random() < 0.7 else rng.choice(filler))
             con.execute(f'INSERT INTO "{t}" VALUES ({",".join("?" * len(cols))})', vals)
 
 

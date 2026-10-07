@@ -87,3 +87,24 @@ def test_literal_regex_extracts_text_and_numbers():
 def test_exec_match_bad_schema_is_no_evidence_not_a_crash():
     dup = "CREATE TABLE t (a INTEGER); CREATE TABLE t (a INTEGER)"
     assert not sql_exec_match("SELECT a FROM t", "SELECT a FROM t", dup)
+
+
+def test_exec_match_double_quoted_literals_select_rows():
+    # regression: gold queries with "double quotes" returned no rows on generated data, so everything scored 0
+    schema = "CREATE TABLE t (name TEXT, city TEXT, n INTEGER)"
+    ref = 'SELECT n FROM t WHERE name = "Clarke Stadium" AND city = "Perth"'
+    assert sql_exec_match(ref, ref, schema)
+    assert not sql_exec_match('SELECT n FROM t WHERE name = "Clarke Stadium"', ref, schema)
+
+
+def test_exec_match_number_literal_in_text_column():
+    schema = "CREATE TABLE t (april TEXT, game TEXT)"
+    ref = "SELECT game FROM t WHERE april = 6"
+    assert sql_exec_match(ref, ref, schema)
+
+
+def test_gold_matches_itself_across_typical_shapes():
+    schema = "CREATE TABLE p (id INTEGER, name TEXT, score REAL)"
+    for ref in ("SELECT COUNT(*) FROM p", "SELECT name FROM p WHERE score > 50 ORDER BY name",
+                "SELECT AVG(score) FROM p WHERE name = 'alpha'", "SELECT MAX(id) FROM p GROUP BY name"):
+        assert sql_exec_match(ref, ref, schema), ref
