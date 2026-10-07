@@ -1,0 +1,43 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "steps": 15,
+  "max_len": 384,
+  "data_dir": "data/sql",
+  "env": {
+    "python": "3.12.7",
+    "torch": "2.6.0+cu124",
+    "os": "Windows-11-10.0.26200-SP0",
+    "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+    "vram_gb": 4.0
+  },
+  "variants": [
+    {
+      "name": "off",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": false
+      },
+      "wall_s": 826.1,
+      "ok": true,
+      "peak_mem_gb": 3.6463656425476074,
+      "median_tok_per_s": 279.3896145316536,
+      "last_loss": 0.12477992661297321,
+      "step_events": 4
+    },
+    {
+      "name": "on",
+      "overrides": {
+        "quant": "4bit",
+        "grad_checkpointing": true,
+        "chunked_ce": true
+      },
+      "wall_s": 85.3,
+      "ok": true,
+      "peak_mem_gb": 2.9536948204040527,
+      "median_tok_per_s": 491.30730331800464,
+      "last_loss": 0.12565825413912535,
+      "step_events": 4
+    }
+  ]
+}

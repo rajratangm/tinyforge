@@ -45,6 +45,7 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/tinyforge/modelcard.py" = ["E501"]  # prose strings
+"src/tinyforge/memtiers.py" = ["E501"]  # long explanatory strings
 "tests/test_modelcard.py" = ["E501"]
 
 [tool.pytest.ini_options]
