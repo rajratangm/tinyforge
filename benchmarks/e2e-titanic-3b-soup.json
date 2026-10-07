@@ -1,0 +1,117 @@
+{
+  "n": 60,
+  "table": "titanic",
+  "table_rows": 891,
+  "run_dir": "runs\\e2e_titanic",
+  "tuned": {
+    "exec_accuracy": 0.9833333333333333,
+    "sql_error_rate": 0.0,
+    "exact_match": 0.9833333333333333,
+    "seconds": 81.5,
+    "sample_misses": [
+      {
+        "q": "What is the average parch where adult male is False?",
+        "gold": "SELECT AVG(parch) FROM titanic WHERE adult_male = 'False'",
+        "pred": "SELECT AVG(parch) FROM titanic WHERE adult_male = 'False' AND sex = 'male'",
+        "why": "wrong result"
+      }
+    ]
+  },
+  "base": {
+    "exec_accuracy": 0.0,
+    "sql_error_rate": 1.0,
+    "exact_match": 0.0,
+    "seconds": 383.5,
+    "sample_misses": [
+      {
+        "q": "What is the total fare where embark town is Southampton?",
+        "gold": "SELECT SUM(fare) FROM titanic WHERE embark_town = 'Southampton'",
+        "pred": "Based on the information provided in the table `titanic`, there is no direct entry for \"embark town\" being \"Southampton\". The table contains data about passengers on the Titanic, but it doesn't include the specific fare for those who embarked from Southampton.\n\nHowever, if you want to find the total fare for all passengers who embarked from Southampton, you would need to filter the data and sum up the fares. Here's how you could do that using SQL:",
+        "why": "error"
+      },
+      {
+        "q": "What is the highest parch where embarked is S?",
+        "gold": "SELECT MAX(parch) FROM titanic WHERE embarked = 'S'",
+        "pred": "Based on the provided table schema for the Titanic dataset, the column that represents the number of parents or children embarked at a certain port is `parch` (Passenger Count Higher than Child). The value \"S\" in this context would refer to Southampton, one of the three main ports from which the Titanic departed.\n\nThe highest value in the `parch` column, which indicates the highest number of parents or children embarked at Southampton (S), can be found by querying the",
+        "why": "error"
+      },
+      {
+        "q": "What is the average parch where adult male is False?",
+        "gold": "SELECT AVG(parch) FROM titanic WHERE adult_male = 'False'",
+        "pred": "Based on the information provided in the table schema for the Titanic dataset, the column \"adult_male\" indicates whether an adult male passenger was recorded as \"True\" or \"False\". However, the question asks about the average parch (presumably a typo and meant to be \"parch,\" which stands for parents and children), not the average of \"adult_male.\"\n\nThe column \"parch\" (parents and children) contains integer values representing how many parents or children each passenger had",
+        "why": "error"
+      },
+      {
+        "q": "How many rows have fare greater than 55.4417?",
+        "gold": "SELECT COUNT(*) FROM titanic WHERE fare > 55.4417",
+        "pred": "To determine how many rows have a fare greater than 55.4417 in the `titanic` table, you can use a SQL query. Here is an example of how you could write this query:\n\n```sql\nSELECT COUNT(*) AS fare_greater_than_55\nFROM titanic\nWHERE fare > 55.4417;\n```\n\nThis query will count all rows where the `fare` column has a value greater than",
+        "why": "error"
+      },
+      {
+        "q": "What is the average sibsp where embarked is C?",
+        "gold": "SELECT AVG(sibsp) FROM titanic WHERE embarked = 'C'",
+        "pred": "To find the average `sibsp` where `embarked` is 'C', we can use a SQL query to filter the data based on the `embarked` column and then calculate the average of `sibsp`. Here's how you can do it:\n\n```sql\nSELECT AVG(sibsp) AS avg_sibsp\nFROM titanic\nWHERE embarked = 'C';\n```\n\nThis query will return the average value of `sibsp` for",
+        "why": "error"
+      },
+      {
+        "q": "What is the total pclass where embarked is Q?",
+        "gold": "SELECT SUM(pclass) FROM titanic WHERE embarked = 'Q'",
+        "pred": "Based on the table schema you provided, there is no column named `embarked` in the `titanic` table. The correct column name should be `embarked` instead of `embark_town`. However, assuming we have the correct column names and that the data includes passengers who embarked from Queenstown (Q), we can use SQL to find the total pclass where embarked is Q.\n\nHere's how you can write the SQL query:\n\n```sql\nSELECT",
+        "why": "error"
+      }
+    ]
+  },
+  "caveats": [
+    "single table; val questions share templates and values with training questions (question-level split), so this measures learning the SQL task on this schema, not transfer to new tables",
+    "execution accuracy compares result sets on the real table (unordered unless the gold SQL has ORDER BY)",
+    "one run, greedy decoding, no seeds or confidence interval"
+  ],
+  "base_instructed": {
+    "exec_accuracy": 0.7,
+    "sql_error_rate": 0.0,
+    "exact_match": 0.5833333333333334,
+    "seconds": 72.6,
+    "sample_misses": [
+      {
+        "q": "What is the average parch where adult male is False?",
+        "gold": "SELECT AVG(parch) FROM titanic WHERE adult_male = 'False'",
+        "pred": "SELECT AVG(parch) FROM titanic WHERE who = 'male' AND adult_male = 'False'",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the total pclass where embarked is Q?",
+        "gold": "SELECT SUM(pclass) FROM titanic WHERE embarked = 'Q'",
+        "pred": "SELECT SUM(pclass) FROM titanic WHERE embarked = 'Q' AND alive = 'yes'",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the lowest fare where deck is F?",
+        "gold": "SELECT MIN(fare) FROM titanic WHERE deck = 'F'",
+        "pred": "SELECT MIN(fare) FROM titanic WHERE deck = 'F' AND alive = 'yes'",
+        "why": "wrong result"
+      },
+      {
+        "q": "List the age where deck is F.",
+        "gold": "SELECT age FROM titanic WHERE deck = 'F'",
+        "pred": "SELECT age FROM titanic WHERE deck = 'F' AND alive = 'yes'",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the average sibsp where alone is False?",
+        "gold": "SELECT AVG(sibsp) FROM titanic WHERE alone = 'False'",
+        "pred": "SELECT AVG(sibsp) FROM titanic WHERE alone = FALSE",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the highest pclass where adult male is False?",
+        "gold": "SELECT MAX(pclass) FROM titanic WHERE adult_male = 'False'",
+        "pred": "SELECT MAX(t1.pclass) FROM titanic AS t1 WHERE t1.who = 'female' AND t1.adult_male = 'False'",
+        "why": "wrong result"
+      }
+    ]
+  },
+  "pipeline": "titanic.csv (public, 891 rows) -> data pii-scan (0 findings) -> data tabular (1126 verified examples) -> worker run backend=soup, Qwen2.5-3B-Instruct NF4, 100 steps, batch 1 x accum 2, ~215 tok/s, 2m08s -> eval above -> /v1/chat/completions with guardrails (3 correct answers, stream ok, secret prompt blocked)",
+  "notes": [
+    "'base' = no output-format instruction: it answers in prose, so 0% is a format effect; 'base_instructed' adds 'Reply with exactly one SQLite query' and is the fair baseline"
+  ]
+}
