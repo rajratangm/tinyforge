@@ -144,10 +144,11 @@ def _lines(proc: subprocess.Popen):
 def run_soup(doc: dict, out: Path, emit: Callable[..., None], model_dir: Path,
              soup_cmd: list[str] | None = None, popen=subprocess.Popen) -> tuple[int, str]:
     """Train with Soup. Returns (status, reason): 0 ok, 4 did not fit, 1 failure. Emits contract events."""
+    out, model_dir = out.resolve(), model_dir.resolve()  # the child runs in another cwd: no relative paths
     s = doc["spec"]
     h = s.get("hyperparameters", {})
     steps = h.get("maxSteps", 300)
-    eff = h.get("batchSize", 1) * h.get("gradAccum", 1)
+    eff =h.get("batchSize", 1) * h.get("gradAccum", 1)
     train_src = out / "data" / "train.jsonl"
     soup_out, workdir = out / "soup_out", out / "soup_work"
     workdir.mkdir(parents=True, exist_ok=True)
@@ -160,7 +161,8 @@ def run_soup(doc: dict, out: Path, emit: Callable[..., None], model_dir: Path,
     cmd = (soup_cmd or find_soup()) + ["--no-telemetry", "--no-audit-log", "train", "--config", str(cfg_path),
                                        "--yes"]
     env = {**os.environ, "SOUP_TELEMETRY": "0", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
-           "WANDB_DISABLED": "true", "PYTHONUTF8": "1"}
+           "WANDB_DISABLED": "true", "PYTHONUTF8": "1",
+           "PYTHONUNBUFFERED": "1"}  # piped stdout is block-buffered otherwise: no live progress
     emit("started", backend="soup", steps=steps, examples_per_step=eff, distinct_examples=distinct,
          model=str(model_dir), stream_layers=True)
     t0 = last_t = time.time()
@@ -178,7 +180,8 @@ def run_soup(doc: dict, out: Path, emit: Callable[..., None], model_dir: Path,
             tokens = m.get("num_tokens", last_tokens)
             step = min(steps, max(1, int(m.get("epoch", 0.0) * steps + 0.5)))  # half-up, not banker's
             last_loss = m["loss"]
-            rate = (tokens - last_tokens) / max(1e-6, now - last_t) if tokens >= last_tokens else None
+            dt = now - last_t
+            rate = (tokens - last_tokens) / dt if tokens >= last_tokens and dt >= 0.05 else None
             emit("step", step=step, loss=m["loss"], lr=m.get("learning_rate"), grad_norm=m.get("grad_norm"),
                  tok_per_s=rate, peak_mem_gb=None)
             last_t, last_tokens = now, tokens

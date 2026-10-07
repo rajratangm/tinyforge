@@ -1,0 +1,28 @@
+{
+  "n": 100,
+  "eval_set": "data/sql/val.jsonl first 100 rows (not used in training)",
+  "adapter": "out_q3b",
+  "base_model": "Qwen/Qwen2.5-3B-Instruct (4-bit NF4)",
+  "training": "Soup SFT, LoRA r=16 alpha=32, 60 single-question rows from data/sql/train.jsonl, 1 epoch = 60 steps, layer streaming on",
+  "decoding": "greedy, max_new_tokens=96, Qwen chat template from the adapter dir",
+  "base": {
+    "exact_match": 0.04,
+    "exact_match_raw_output": 0.0,
+    "executes_on_empty_table": 0.09
+  },
+  "tuned": {
+    "exact_match": 0.45,
+    "exact_match_raw_output": 0.45,
+    "executes_on_empty_table": 0.88
+  },
+  "rows_where_tuned_output_differs_from_base": 100,
+  "peak_vram_gb_torch_allocated": 1.96,
+  "wall_s": 925,
+  "caveats": [
+    "exact-match is string match after whitespace/case/quote normalisation; equivalent SQL with different text counts as wrong",
+    "'executes' only checks the SQL runs on an EMPTY table built from the CREATE TABLE in the prompt; it is NOT accuracy",
+    "base output has markdown fences stripped before scoring (exact_match_raw_output is without stripping)",
+    "only 60 training steps on 60 examples; a single run, no seeds, no confidence interval",
+    "evaluated resident (4-bit NF4 + LoRA via PEFT), not through Soup's layer-streaming path; the adapter is the thing under test"
+  ]
+}

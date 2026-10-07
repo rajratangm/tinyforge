@@ -50,3 +50,14 @@ card is 119.6 tok/s. Adapter quality is checked separately (see `benchmarks/`).
   resident for evaluation, which only works if it fits in VRAM.
 - Single GPU, single node, `method: lora|qlora`, text SFT only.
 - Windows paths are exercised on the author's laptop only; Linux has not been run.
+
+## Verified end to end (2026-10-07)
+
+- Adapter quality (`benchmarks/soup-adapter-check-qwen3b.json`): Qwen2.5-3B, 60 Soup steps, 100 held-out SQL rows,
+  exact match 4% (base) to 45% (tuned); SQL that runs on an empty table 9% to 88%. Evaluated resident, not through
+  the streaming path. The 8B adapter has not been quality-checked (8B does not fit resident on 4 GB).
+- Real job: `tinyforge worker run` with `backend: soup` (3B, 20 steps) exited 0, streamed live `step` events
+  (~190-205 tok/s), wrote `best/` and `ft_config.json`; the adapter was then served through `/v1/chat/completions`
+  and answered a held-out-style SQL question correctly.
+- Bugs this found that a fake Soup missed: relative paths (child runs in another cwd) and block-buffered stdout
+  (no live progress without `PYTHONUNBUFFERED`).

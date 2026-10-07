@@ -32,6 +32,7 @@ from pathlib import Path
 argv = sys.argv[1:]
 assert argv[:2] == ["--no-telemetry", "--no-audit-log"], argv
 assert os.environ["SOUP_TELEMETRY"] == "0" and os.environ["HF_HUB_OFFLINE"] == "1"
+assert os.environ["PYTHONUNBUFFERED"] == "1"
 cfg_path = Path(argv[argv.index("--config") + 1])
 import yaml
 cfg = yaml.safe_load(cfg_path.read_text())
@@ -95,7 +96,7 @@ def test_success_translates_events_collects_only_allowlisted_files_and_writes_co
     assert kinds[0] == "started" and kinds.count("step") == 4 and kinds[-1] == "finished"
     steps = [e for e in ev if e["event"] == "step"]
     assert [s["step"] for s in steps] == [3, 5, 8, 10] and steps[0]["loss"] == 1.0
-    assert all(s["tok_per_s"] is not None and s["tok_per_s"] >= 0 for s in steps)
+    assert all(s["tok_per_s"] is None or 0 <= s["tok_per_s"] < 1e6 for s in steps)  # burst lines: no dt
     best = out / "best"
     assert (best / "adapter_model.safetensors").exists() and (best / "adapter_config.json").exists()
     assert not (best / "training_args.bin").exists() and not (best / "checkpoint-10").exists()
@@ -159,3 +160,9 @@ def test_parse_metrics_and_config_builder():
     doc["spec"]["method"] = "lora"
     lora_cfg = soup_backend.build_config(doc, Path("m"), Path("t"), Path("o"))
     assert lora_cfg["training"]["quantization"] == "none"
+
+
+def test_works_with_relative_paths_because_child_runs_in_another_cwd(env, monkeypatch, capsys):
+    spec, out, _ = env
+    monkeypatch.chdir(out.parent)
+    assert worker.run_job(spec, Path("out")) == worker.EXIT_OK
