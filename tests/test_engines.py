@@ -130,6 +130,7 @@ def test_router_uses_engine_concurrency_and_maps_errors(fake, monkeypatch):
     make, _, _ = fake
     monkeypatch.setenv("FAKE_DELAY", "0.4")
     b = make(parallel=2)
+    b.queue_wait_s = 0.0  # reject at once when both slots are busy
     app = FastAPI()
     app.include_router(build_router(lambda: None, lambda: b))
     c = TestClient(app)
@@ -143,6 +144,23 @@ def test_router_uses_engine_concurrency_and_maps_errors(fake, monkeypatch):
     [t.join(10) for t in ts]
     assert codes == [200, 200]
     assert c.post("/v1/chat/completions", json=body).status_code == 200  # slots released
+
+
+def test_waiting_request_gets_a_slot_when_one_frees_up_within_queue_wait(fake, monkeypatch):
+    make, _, _ = fake
+    monkeypatch.setenv("FAKE_DELAY", "0.4")
+    b = make(parallel=1)
+    b.queue_wait_s = 10.0
+    app = FastAPI()
+    app.include_router(build_router(lambda: None, lambda: b))
+    c = TestClient(app)
+    body = {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}
+    codes: list[int] = []
+    ts = [threading.Thread(target=lambda: codes.append(c.post("/v1/chat/completions", json=body).status_code))
+          for _ in range(3)]
+    [t.start() for t in ts]
+    [t.join(30) for t in ts]
+    assert codes == [200, 200, 200]  # one slot, three requests: they queue instead of failing
 
 
 def test_router_maps_upstream_and_missing_model_errors(fake, monkeypatch, tmp_path):

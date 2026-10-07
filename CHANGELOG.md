@@ -11,6 +11,8 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
   and `--pii flag|redact|drop`.
 - OpenAI-compatible `/v1/models` and `/v1/chat/completions` (JSON + SSE) with guardrails v1 (secret block/redact,
   optional PII policy and denylist, counters on /metrics).
+- `tinyforge export gguf` and `tinyforge serve --engine llamacpp` (managed llama-server behind the same API, auto
+  GPU layers, slots with a short queue). See docs/llamacpp-engine.md.
 - Host RAM/swap gauges on /metrics and a training Grafana dashboard.
 - API bearer auth, SQLite job queue, /metrics, TLS/CORS/rate limiting.
 - `forgectl` (validate, plan, doctor, run, agent, net check); JobSpec v1alpha1; Helm chart and CRD; Terraform.

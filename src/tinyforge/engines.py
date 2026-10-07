@@ -133,6 +133,7 @@ class LlamaCppBackend(ProxyBackend):
         self.server_bin, self.ngl, self.ctx, self.parallel = server_bin, ngl, ctx, max(1, parallel)
         self.startup_timeout = startup_timeout
         self.max_concurrency = self.parallel
+        self.queue_wait_s = float(os.environ.get("TINYFORGE_QUEUE_WAIT_S", "20"))  # wait for a slot, then 429
         self.proc: subprocess.Popen | None = None
         self.log_path = Path(tempfile.gettempdir()) / f"tinyforge-llama-{os.getpid()}.log"
         self._lock = threading.Lock()

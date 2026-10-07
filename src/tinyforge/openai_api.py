@@ -9,7 +9,8 @@ filtered, then replayed as SSE (so streaming cannot bypass a filter, at the cost
 Both lists are empty unless the host configures guardrails (see guardrails.py).
 
 Limits: concurrency is the backend's `max_concurrency` (1 for in-process models, so a second request gets
-429 + Retry-After; a batching engine such as llama.cpp advertises its slot count), `n` must be 1, no tools,
+429 + Retry-After at once; a batching engine such as llama.cpp advertises its slot count and a short
+`queue_wait_s` during which a request waits for a free slot), `n` must be 1, no tools,
 no logprobs. A client disconnect stops the response but the generation thread runs to max_tokens.
 """
 from __future__ import annotations
@@ -100,19 +101,25 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                  input_filters: list[Callable[[list[dict]], None]] | None = None,
                  output_filters: list[Callable[[str], str]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/v1", dependencies=[Depends(auth)])
-    inflight_lock, inflight = threading.Lock(), [0]
+    slots, inflight = threading.Condition(), [0]
 
     def acquire(backend: Backend) -> bool:
-        """Admit a request if the engine has a free slot (one for in-process backends)."""
-        with inflight_lock:
-            if inflight[0] >= getattr(backend, "max_concurrency", 1):
-                return False
+        """Admit a request if a slot is free, waiting up to `queue_wait_s` (0 = reject at once)."""
+        limit = getattr(backend, "max_concurrency", 1)
+        deadline = time.monotonic() + getattr(backend, "queue_wait_s", 0.0)
+        with slots:
+            while inflight[0] >= limit:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                slots.wait(left)
             inflight[0] += 1
             return True
 
     def release() -> None:
-        with inflight_lock:
+        with slots:
             inflight[0] -= 1
+            slots.notify()
     in_filters = input_filters if input_filters is not None else []
     out_filters = output_filters if output_filters is not None else []
 
