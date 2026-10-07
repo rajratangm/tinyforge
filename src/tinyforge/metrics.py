@@ -124,4 +124,11 @@ def render(version: str, jobs: list[dict], running_log: Iterable[str] = (),
             metric(name, "gauge", help_)
             o.append(f"{name} {_num(sig[key])}")
 
+    for key, name, help_ in (("ram_total", "tinyforge_host_ram_total_bytes", "Host RAM installed."),
+                             ("ram_available", "tinyforge_host_ram_available_bytes", "Host RAM available."),
+                             ("swap_used", "tinyforge_host_swap_used_bytes", "Host swap/pagefile in use.")):
+        if host and _is_number(host.get(key)):
+            metric(name, "gauge", help_)
+            o.append(f"{name} {_num(host[key])}")
+
     return "\n".join(o) + "\n"
