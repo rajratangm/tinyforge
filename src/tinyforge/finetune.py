@@ -17,10 +17,14 @@ import torch
 from pydantic import BaseModel
 
 from . import hardware
+from .errors import UserError
 from .memory import causal_lm_loss
 from .warnings import Level, Report
 
 DEFAULT_BASE = "HuggingFaceTB/SmolLM2-360M-Instruct"
+
+
+UNTRAINED_FRAC = 0.9  # held-out loss >= this fraction of ln(vocab) means 'no better than random guessing'
 
 
 class FTConfig(BaseModel):
@@ -175,10 +179,20 @@ def turn_terminator(tok) -> str:
     return tail if tail and tail in tok.get_vocab() else tok.eos_token
 
 
+def require_chat_template(tok, base_model: str = "") -> None:
+    """Fine-tuning here is chat-format SFT: the tokenizer must define how to render a conversation."""
+    if not getattr(tok, "chat_template", None):
+        raise UserError(
+            f"The tokenizer of '{base_model or 'this model'}' has no chat template, so tinyforge cannot "
+            "format conversations for it. Use an instruct/chat version of the model (for example a "
+            "'-Instruct' checkpoint), or set tokenizer.chat_template yourself.")
+
+
 class ChatDataset:
     """Tokenised chat examples with loss masked to the assistant reply only."""
 
     def __init__(self, path: Path, tok, max_len: int):
+        require_chat_template(tok)
         self.items: list[tuple[list[int], list[int]]] = []
         self.truncated = 0
         end = turn_terminator(tok)
@@ -342,6 +356,13 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
         best_val = base_val
         event("eval", step=0, val_loss=base_val, train_loss=None,
               val_ppl=math.exp(min(base_val, 20)))
+        rand_loss = math.log(max(2, len(tok)))
+        if base_val >= UNTRAINED_FRAC * rand_loss:
+            event("diagnostic", code="FT010", level="warn",
+                  message=f"The base model looks untrained: its held-out loss ({base_val:.2f}) is about what "
+                          f"random guessing gives ({rand_loss:.2f} = ln of the {len(tok)}-token vocabulary). "
+                          "Training will lower the loss, but the result will not be a useful model.",
+                  fix="Start from a pretrained model (e.g. an instruct checkpoint), not random weights.")
         model.save_pretrained(c.run_dir / "best")  # step-0 adapter == base; never ship worse than base
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()

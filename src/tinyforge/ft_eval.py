@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import time
+import zlib
 from pathlib import Path
 
 import torch
@@ -38,6 +39,17 @@ PROMPTS = [
     "Write a short, polite email declining a meeting invitation.",
     "What is the difference between a list and a tuple in Python?",
 ]
+
+
+UNTRAINED_FRAC = 0.9  # held-out loss >= this fraction of ln(vocab): no better than random guessing
+# zlib compression ratio below this = looping text (measured here: garbage 0.05-0.30, real models 0.57-0.64)
+DEGENERATE_RATIO = 0.35
+MIN_CHARS_FOR_RATIO = 40
+
+
+def compress_ratio(text: str) -> float:
+    b = text.encode("utf-8")
+    return len(zlib.compress(b, 9)) / max(1, len(b))
 
 
 def _distinct2(text: str) -> float:
@@ -94,6 +106,14 @@ def evaluate(run_dir: Path, data_dir: Path | None = None, merge: bool = True) ->
     res.update(val_loss_base=base_loss, val_loss_tuned=tuned,
                val_ppl_base=math.exp(min(base_loss, 20)), val_ppl_tuned=math.exp(min(tuned, 20)),
                improvement_pct=100 * (base_loss - tuned) / base_loss)
+    rand_loss = math.log(max(2, len(tok)))
+    res.update(random_guess_loss=rand_loss, base_untrained=base_loss >= UNTRAINED_FRAC * rand_loss)
+    if res["base_untrained"]:
+        rep.add("FE010", Level.ERROR,
+                f"The base model looks untrained: its held-out loss ({base_loss:.2f}) is about what random "
+                f"guessing gives ({rand_loss:.2f}). Any 'improvement over base' is meaningless and the model "
+                "is not useful.",
+                "Start from a pretrained model, not random weights.")
     if tuned >= base_loss:
         rep.add("FE001", Level.ERROR, f"Tuned model is not better than base on held-out data "
                 f"({tuned:.3f} vs {base_loss:.3f}).", "Check data quality, raise steps, or lower LR.")
@@ -130,6 +150,14 @@ def evaluate(run_dir: Path, data_dir: Path | None = None, merge: bool = True) ->
         rep.add("FE005", Level.ERROR, f"{empties}/{len(PROMPTS)} generations were empty.")
     if res["distinct_2"] < 0.6:
         rep.add("FE006", Level.WARN, f"Repetitive outputs (distinct-2 {res['distinct_2']:.2f}).")
+    degenerate = [len(s["tuned"]) >= MIN_CHARS_FOR_RATIO and compress_ratio(s["tuned"]) < DEGENERATE_RATIO
+                  for s in samples]
+    res["degenerate_tuned"] = sum(degenerate)
+    if sum(degenerate) * 2 >= len(samples):
+        rep.add("FE011", Level.ERROR,
+                f"{sum(degenerate)}/{len(samples)} generations are degenerate loops (repeated words or "
+                f"symbols; compression ratio < {DEGENERATE_RATIO}). The model is not producing usable text.",
+                "Check the base model, data quality and learning rate.")
     if all(s["base"] == s["tuned"] for s in samples):
         rep.add("FE007", Level.WARN, "Tuned and base outputs are identical: the adapter has no visible "
                 "effect.")

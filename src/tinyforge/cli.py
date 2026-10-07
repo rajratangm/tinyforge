@@ -810,9 +810,13 @@ def main() -> None:
     import sys
 
     from . import deps
+    from .errors import UserError
 
     try:
         app()
+    except UserError as e:
+        print(f"tinyforge: {e}", file=sys.stderr)
+        sys.exit(2)
     except ModuleNotFoundError as e:
         msg = deps.explain_missing(e)
         if msg is None:

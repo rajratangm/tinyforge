@@ -124,6 +124,8 @@ def evaluate_gates(gates: list[dict], summary: dict, out: Path, data_format: str
                 from . import ft_eval
 
                 cache["ft_eval"] = ft_eval.evaluate(out, out / "data", True)
+            if cache["ft_eval"].get("base_untrained"):
+                raise ValueError("the base model looks untrained, so gains over it are meaningless")
             return float(cache["ft_eval"]["improvement_pct" if metric == "gain_pct" else "forgetting_pct"])
         if metric == "task_exact_match_gain_pts":
             if data_format != "sql-create-context":

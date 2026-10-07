@@ -58,6 +58,15 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
     if pii_policy not in ("flag", "redact", "drop"):
         raise ValueError("pii_policy must be flag, redact or drop")
     rep = Report()
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(base_model)
+    if not getattr(tok, "chat_template", None):
+        rep.add("FD007", Level.ERROR,
+                f"The tokenizer of '{base_model}' has no chat template, so conversations cannot be "
+                "formatted for it.",
+                "Use an instruct/chat checkpoint (e.g. a '-Instruct' model) or set tokenizer.chat_template.")
+        return {"source": source, "base_model": base_model, "train": 0, "val": 0}, rep
     pii_kinds: dict[str, int] = {}
     pii_dropped = pii_redacted = 0
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -100,9 +109,6 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
                 fh.write(json.dumps({"messages": m}, ensure_ascii=False) + "\n")
 
     # Length stats with the real tokenizer so truncation is predicted, not discovered.
-    from transformers import AutoTokenizer
-
-    tok = AutoTokenizer.from_pretrained(base_model)
     lens = [len(tok.apply_chat_template(m, tokenize=True, return_dict=False)) for m in train[:500]]
     trunc = sum(n > max_len for n in lens) / max(1, len(lens))
 

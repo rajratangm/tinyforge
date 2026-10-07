@@ -112,6 +112,8 @@ def test_ft_data_prepare_policies(tmp_path, monkeypatch):
     from tinyforge import ft_data
 
     class Tok:
+        chat_template = "{{ messages }}"  # prepare() now refuses tokenizers without one
+
         def apply_chat_template(self, m, tokenize=True, return_dict=False):
             return [1, 2, 3]
 
