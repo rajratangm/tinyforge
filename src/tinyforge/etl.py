@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import pii as piilib
 from .warnings import Level, Report
 
 TEXT_EXT = {".txt", ".md", ".markdown", ".rst"}
@@ -166,9 +167,14 @@ def dedupe(chunks: list[Chunk], threshold: float = 0.8) -> tuple[list[Chunk], in
 
 # ------------------------------------------------------------------ pipeline
 
-def ingest(paths: list[Path], max_words: int = 300, min_words: int = 20,
-           threshold: float = 0.8) -> tuple[list[Chunk], dict, Report]:
+def ingest(paths: list[Path], max_words: int = 300, min_words: int = 20, threshold: float = 0.8,
+           pii_policy: str = "flag") -> tuple[list[Chunk], dict, Report]:
+    """pii_policy: flag | redact | drop. Chunks containing credentials are always dropped."""
+    if pii_policy not in ("flag", "redact", "drop"):
+        raise ValueError("pii_policy must be flag, redact or drop")
     rep = Report()
+    pii_kinds: dict[str, int] = {}
+    secret_dropped = pii_dropped = 0
     files: list[Path] = []
     for p in paths:
         files.extend(sorted(x for x in p.rglob("*") if x.is_file()) if p.is_dir() else [p])
@@ -185,10 +191,26 @@ def ingest(paths: list[Path], max_words: int = 300, min_words: int = 20,
             if len(c.split()) < min_words:
                 short += 1
                 continue
+            found = piilib.scan(c)
+            for x in found:
+                pii_kinds[x.kind] = pii_kinds.get(x.kind, 0) + 1
+            if any(x.secret for x in found):
+                secret_dropped += 1
+                continue
+            if found and pii_policy == "drop":
+                pii_dropped += 1
+                continue
+            if found and pii_policy == "redact":
+                c = piilib.redact(c, found)
             chunks.append(Chunk(c, str(f), i))
     kept, exact, near = dedupe(chunks, threshold)
     meta = {"files": len(files), "files_failed": failed, "chunks_made": len(chunks), "dropped_short": short,
-            "dropped_exact_dup": exact, "dropped_near_dup": near, "chunks_kept": len(kept)}
+            "dropped_exact_dup": exact, "dropped_near_dup": near, "chunks_kept": len(kept),
+            "pii_by_kind": pii_kinds, "pii_policy": pii_policy, "dropped_secret": secret_dropped,
+            "dropped_pii": pii_dropped}
+    if pii_kinds:
+        rep.add("ETL005", Level.WARN, f"PII or secrets found in chunks: {pii_kinds} (policy={pii_policy}).",
+                "Use --pii redact or --pii drop; names and addresses are not detected.")
     if not kept:
         rep.add("ETL002", Level.ERROR, "No usable text came out.",
                 "Check file types and that files are not scans.")

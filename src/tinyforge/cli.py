@@ -120,6 +120,7 @@ def data_ingest(
     chunk_words: int = 300,
     min_words: int = 20,
     dedupe_threshold: float = 0.8,
+    pii: Annotated[str, typer.Option(help="flag | redact | drop (secrets are always dropped)")] = "flag",
     as_json: JsonOpt = False,
 ) -> None:
     """Documents -> cleaned, chunked, de-duplicated text JSONL (step 1 of making training data)."""
@@ -127,7 +128,7 @@ def data_ingest(
 
     from . import etl
 
-    chunks, meta, rep = etl.ingest(paths, chunk_words, min_words, dedupe_threshold)
+    chunks, meta, rep = etl.ingest(paths, chunk_words, min_words, dedupe_threshold, pii)
     if chunks:
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", encoding="utf-8") as f:
@@ -166,6 +167,43 @@ def data_pairs(
         print(json.dumps({"meta": meta}))
     else:
         console.print({k: v for k, v in meta.items() if k != "prompt"})
+
+
+@data_app.command("pii-scan")
+def data_pii_scan(
+    path: Path,
+    redact_to: Annotated[Path | None, typer.Option(help="Write a redacted copy here.")] = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Scan a JSONL (messages or text rows) for PII and secrets. Exit 1 if any secret is found."""
+    from . import pii
+
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+    def texts(r: dict) -> list[str]:
+        if "messages" in r:
+            return [m.get("content") or "" for m in r["messages"]]
+        return [str(r.get("text", ""))]
+
+    counts, hit, examples = pii.summarize(" \n".join(texts(r)) for r in rows)
+    secrets = sum(n for k, n in counts.items() if k in pii.SECRET_PATTERNS)
+    if redact_to is not None:
+        with redact_to.open("w", encoding="utf-8") as f:
+            for r in rows:
+                if "messages" in r:
+                    r = {**r, "messages": [{**m, "content": pii.redact(m.get("content") or "")}
+                                           for m in r["messages"]]}
+                else:
+                    r = {**r, "text": pii.redact(str(r.get("text", "")))}
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    report = {"rows": len(rows), "rows_with_findings": hit, "by_kind": dict(counts),
+              "masked_examples": examples, "secrets": secrets,
+              "note": "pattern-based: names, addresses, free-text identifiers are not detected"}
+    if as_json:
+        print(json.dumps(report))
+    else:
+        console.print(report)
+    raise typer.Exit(1 if secrets else 0)
 
 
 @data_app.command("tabular")
@@ -339,12 +377,14 @@ def _ft_cfg(base_model: str, run_dir: Path, data_dir: Path, **kw):
 def ft_data(
     source: Annotated[str, typer.Option(help="JSONL path or HF dataset id.")] = "yahma/alpaca-cleaned",
     out: Path = Path("data/ft"), base_model: BaseOpt = "HuggingFaceTB/SmolLM2-360M-Instruct",
-    limit: int = 3000, val_pct: int = 5, max_len: int = 512, as_json: JsonOpt = False,
+    limit: int = 3000, val_pct: int = 5, max_len: int = 512,
+    pii: Annotated[str, typer.Option(help="flag | redact | drop (secrets are always dropped)")] = "flag",
+    as_json: JsonOpt = False,
 ) -> None:
     """Normalise an instruction dataset into chat JSONL with dedupe, leakage-safe split, PII checks."""
     from . import ft_data as fd
 
-    meta, rep = fd.prepare(source, out, base_model, limit, val_pct, max_len)
+    meta, rep = fd.prepare(source, out, base_model, limit, val_pct, max_len, pii)
     if as_json:
         print(json.dumps({"meta": meta, "diagnostics": rep.to_list()}))
     else:

@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
-import re
 from collections.abc import Iterator
 from pathlib import Path
 
+from . import pii as piilib
 from .warnings import Level, Report
 
-EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-SECRET = re.compile(r"sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}")
+SECRET = piilib.SECRET_RE
 
 
 def _iter_source(source: str, raw_limit: int | None) -> Iterator[dict]:
@@ -53,8 +52,14 @@ def _is_val(key: str, val_pct: int) -> bool:
 
 
 def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_pct: int = 5,
-            max_len: int = 512) -> tuple[dict, Report]:
+            max_len: int = 512, pii_policy: str = "flag") -> tuple[dict, Report]:
+    """pii_policy: flag (keep, report), redact ([EMAIL] etc. placeholders) or drop (skip the example).
+    Credential-like strings always drop the example."""
+    if pii_policy not in ("flag", "redact", "drop"):
+        raise ValueError("pii_policy must be flag, redact or drop")
     rep = Report()
+    pii_kinds: dict[str, int] = {}
+    pii_dropped = pii_redacted = 0
     out_dir.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     rows: list[list[dict]] = []
@@ -70,11 +75,19 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
             dup += 1
             continue
         seen.add(k)
-        text = " ".join(m["content"] for m in msgs)
-        if EMAIL.search(text) or SECRET.search(text):
+        found = piilib.scan(" ".join(m["content"] for m in msgs))
+        if found:
             pii += 1
-            if SECRET.search(text):
+            for f in found:
+                pii_kinds[f.kind] = pii_kinds.get(f.kind, 0) + 1
+            if any(f.secret for f in found):
                 continue  # never train on anything that looks like a credential
+            if pii_policy == "drop":
+                pii_dropped += 1
+                continue
+            if pii_policy == "redact":
+                msgs = [{**m, "content": piilib.redact(m["content"])} for m in msgs]
+                pii_redacted += 1
         rows.append(msgs)
         if len(rows) >= limit:
             break
@@ -95,7 +108,9 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
 
     meta = {"source": source, "base_model": base_model, "raw": raw, "train": len(train),
             "val": len(val), "dropped_invalid": bad, "dropped_duplicates": dup,
-            "pii_flagged": pii, "truncated_frac": trunc, "max_len": max_len}
+            "pii_flagged": pii, "pii_by_kind": pii_kinds, "pii_policy": pii_policy,
+            "pii_dropped": pii_dropped, "pii_redacted": pii_redacted,
+            "truncated_frac": trunc, "max_len": max_len}
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
     if len(train) < 50:
@@ -116,6 +131,8 @@ def prepare(source: str, out_dir: Path, base_model: str, limit: int = 3000, val_
         rep.add("FD005", Level.WARN, f"{trunc:.0%} of examples exceed {max_len} tokens and will be "
                 "truncated.", "Raise --max-len (costs VRAM) or filter long examples.")
     if pii:
-        rep.add("FD006", Level.WARN, f"{pii} examples contain email addresses or credential-like strings "
-                "(credential-like ones were dropped).", "Scrub PII before training anything you share.")
+        rep.add("FD006", Level.WARN, f"{pii} examples contain PII or credential-like strings "
+                f"({pii_kinds}; credential-like ones were dropped; policy={pii_policy}). Pattern-based: "
+                "names and addresses are not detected.",
+                "Use --pii redact or --pii drop before training anything you share.")
     return meta, rep
