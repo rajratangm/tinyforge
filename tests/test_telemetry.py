@@ -197,3 +197,89 @@ def test_requests_get_kv_figures_even_if_the_dashboard_was_never_opened(monkeypa
     if server._manager is not None:
         server._manager.stop()
     server._manager = None
+
+
+class SlowStart(Fake):
+    """First piece after a delay (like prompt processing), then the rest quickly."""
+
+    def stream(self, messages, max_tokens, temperature, top_p):
+        import time
+
+        time.sleep(0.15)
+        yield "Hel"
+        yield "lo"
+
+
+def test_router_measures_time_to_first_token_queue_wait_and_finish_reason():
+    got = []
+    app = FastAPI()
+    app.include_router(build_router(lambda: None, lambda: SlowStart(), on_request=got.append))
+    c = TestClient(app)
+    body = {"messages": [{"role": "user", "content": "one two three"}], "max_tokens": 50}
+    for stream in (False, True):
+        assert c.post("/v1/chat/completions", json={**body, "stream": stream}).status_code == 200
+    for r in got:
+        assert 0.1 <= r["ttft_s"] <= r["seconds"] and r["queue_s"] < 0.1 and r["finish_reason"] == "stop"
+        assert r["concurrent"] == 1 and r["buffered"] is False  # counts itself
+
+
+def test_refusals_are_counted_by_reason():
+    codes = []
+    busy_app = FastAPI()
+    busy_app.include_router(
+        build_router(lambda: None, lambda: Fake(), busy=lambda: True, on_reject=codes.append)
+    )
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+    assert TestClient(busy_app).post("/v1/chat/completions", json=body).status_code == 503
+
+    def deny(msgs):
+        from tinyforge.openai_api import Blocked
+
+        raise Blocked("no", "content_filter")
+
+    app = FastAPI()
+    app.include_router(
+        build_router(lambda: None, lambda: Fake(), input_filters=[deny], on_reject=codes.append)
+    )
+    TestClient(app).post("/v1/chat/completions", json=body)
+    TestClient(app).post("/v1/chat/completions", json={**body, "n": 2})
+    assert codes == ["gpu_busy", "content_filter", "unsupported_n"]
+
+
+def test_summary_percentiles_throughput_and_derived_latencies():
+    import time
+
+    t = Telemetry()
+    for i in range(1, 11):  # ttft 0.1 .. 1.0 s, 21 tokens each over (ttft + 1 s)
+        t.record_request(
+            100, 21, 1.0 + i / 10, ttft_s=i / 10, queue_s=0.0, finish_reason="stop", concurrent=i % 3
+        )
+    t.record_reject("busy")
+    t.record_reject("busy")
+    s = t.summary()
+    assert s["requests"] == 10 and s["rejected"] == {"busy": 2} and s["max_concurrent_seen"] == 2
+    assert s["ttft"]["p50"] == 0.5 and s["ttft"]["p95"] == 1.0 and s["ttft"]["n"] == 10
+    last = list(t.requests)[-1]
+    assert last["tpot_ms"] == 50.0  # 1.0 s of decode for 20 more tokens
+    assert last["prefill_tok_per_s"] == 100.0  # 100 prompt tokens in 1.0 s to first token
+    assert s["tokens_per_s_now"] > 0 and s["requests_last_min"] == 10
+    assert t.summary(now=time.time() + 3600)["tokens_per_s_now"] == 0.0  # nothing recent
+    assert Telemetry().summary()["ttft"]["p50"] is None  # empty: no crash, no invented numbers
+
+
+def test_dashboard_has_the_inference_metric_tiles_and_charts():
+    from pathlib import Path
+
+    html = (Path(server.__file__).parent / "ui" / "index.html").read_text(encoding="utf-8")
+    for needle in (
+        "srv_tiles",
+        "c_ttft",
+        "c_lat",
+        "Time to first token",
+        "Throughput now",
+        "Per-token latency",
+        "Queue wait",
+        "Refused",
+        "renderTiles",
+    ):
+        assert needle in html, needle

@@ -538,6 +538,7 @@ app.include_router(
         _guard_in,
         _guard_out,
         on_request=_on_request,
+        on_reject=telemetry.record_reject,
     )
 )
 

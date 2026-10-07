@@ -75,6 +75,11 @@ canvas{width:100%;height:200px}.row{display:flex;gap:8px}.row>*{flex:1}
 
   <section class="card wide"><h2>Serving and memory</h2>
     <div id="srv_stats" style="color:var(--mut);margin-bottom:8px">No serving activity yet. Start <code>tinyforge serve</code> and send a request to /v1/chat/completions.</div>
+    <div id="srv_tiles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px"></div>
+    <div class="row" style="flex-wrap:wrap">
+      <div style="min-width:320px"><label>Time to first token (s) vs prompt tokens: prefill cost</label><canvas id="c_ttft" width="560" height="200"></canvas></div>
+      <div style="min-width:320px"><label>Latency per request (s): queue wait, time to first token, total</label><canvas id="c_lat" width="560" height="200"></canvas></div>
+    </div>
     <div class="row" style="flex-wrap:wrap">
       <div style="min-width:320px"><label>GPU / RAM memory over time (GB)</label><canvas id="c_mem" width="560" height="200"></canvas></div>
       <div style="min-width:320px"><label>KV cache vs tokens in context (MB): line = exact maths, dots = your requests</label><canvas id="c_kv" width="560" height="200"></canvas></div>
@@ -217,6 +222,24 @@ function plot(id,series,xLabel){
   });
   let lx=L+6;series.forEach(s=>{x.fillStyle=s.color;x.fillRect(lx,T+2,10,3);x.fillStyle=mut;x.fillText(s.label,lx+14,T+9);lx+=s.label.length*6+30});
 }
+
+function tile(label,value,sub){return `<div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px"><div style="color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em">${esc(label)}</div><div style="font-size:20px;font-weight:600">${value}</div><div style="color:var(--mut);font-size:11px">${sub||'&nbsp;'}</div></div>`}
+function renderTiles(m){
+  if(!m||!m.requests){$('srv_tiles').innerHTML='';return}
+  const f=(v,u,d=2)=>v==null?'&ndash;':(+v).toFixed(d)+(u||'');
+  const pp=(o,u,d)=>o&&o.p50!=null?`p50 ${f(o.p50,u,d)} &middot; p95 ${f(o.p95,u,d)}`:'no data';
+  const rej=Object.entries(m.rejected||{}).map(([k,v])=>k+' '+v).join(', ');
+  $('srv_tiles').innerHTML=
+    tile('Time to first token',f(m.ttft.p50,' s'),pp(m.ttft,' s'))+
+    tile('Latency (whole request)',f(m.latency.p50,' s'),pp(m.latency,' s'))+
+    tile('Throughput now',f(m.tokens_per_s_now,' tok/s',1),'last 30 s, all requests')+
+    tile('Per request speed',f(m.tok_per_s.p50,' tok/s',1),pp(m.tok_per_s,'',1))+
+    tile('Per-token latency',f(m.tpot_ms.p50,' ms',0),pp(m.tpot_ms,'',0))+
+    tile('Prompt processing',f(m.prefill_tok_per_s.p50,' tok/s',0),'prefill speed, median')+
+    tile('Queue wait',f(m.queue.p50,' s'),pp(m.queue,' s'))+
+    tile('Requests',m.requests,m.requests_last_min+' in the last minute &middot; max '+m.max_concurrent_seen+' at once')+
+    tile('Refused',Object.values(m.rejected||{}).reduce((a,b)=>a+b,0),esc(rej)||'none');
+}
 let telemetryOff=false;
 async function loadTelemetry(){
   if(telemetryOff||document.visibilityState==='hidden')return;
@@ -234,6 +257,13 @@ async function loadTelemetry(){
   if(t.kv_alloc_mb&&e.kind==='llamacpp')ser.push({label:'allocated up front',color:'#fbbf24',line:true,dash:true,pts:[[0,t.kv_alloc_mb],[e.ctx_alloc_tokens,t.kv_alloc_mb]]});
   plot('c_kv',ser,'tokens');
   plot('c_req',[{label:'GPU used at request end',color:'#6ea8fe',line:false,pts:req.filter(r=>r.vram_used_gb!=null).map(r=>[r.context_tokens,r.vram_used_gb])}],'tokens');
+  renderTiles(t.summary);
+  plot('c_ttft',[{label:'time to first token',color:'#6ea8fe',line:false,pts:req.filter(r=>r.ttft_s!=null).map(r=>[r.prompt_tokens,r.ttft_s])}],'prompt tokens');
+  plot('c_lat',[
+    {label:'total',color:'#4ade80',line:true,pts:req.map((r,i)=>[i+1,r.seconds])},
+    {label:'first token',color:'#6ea8fe',line:true,pts:req.filter(r=>r.ttft_s!=null).map((r,i)=>[i+1,r.ttft_s])},
+    {label:'queue wait',color:'#fbbf24',line:true,pts:req.filter(r=>r.queue_s!=null).map((r,i)=>[i+1,r.queue_s])}
+  ],'request #');
   plot('c_tps',[{label:'tokens/s',color:'#4ade80',line:true,pts:req.filter(r=>r.tok_per_s!=null).map((r,i)=>[i+1,r.tok_per_s])}],'request #');
   if(e.name){
     const last=req[req.length-1];

@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 import psutil
@@ -130,12 +130,22 @@ def gpu_memory() -> tuple[float, float] | None:
         return None
 
 
+def percentile(values: list[float], p: float) -> float | None:
+    """Nearest-rank percentile (no interpolation: honest on the small samples a dashboard has)."""
+    if not values:
+        return None
+    s = sorted(values)
+    k = max(0, min(len(s) - 1, int(-(-p / 100 * len(s) // 1)) - 1))
+    return round(s[k], 3)
+
+
 class Telemetry:
     def __init__(self, interval_s: float = 2.0, max_samples: int = 900, max_requests: int = 200):
         self.interval_s = interval_s
         self.samples: deque = deque(maxlen=max_samples)
         self.requests: deque = deque(maxlen=max_requests)
         self.engine: dict = {}
+        self.rejected: Counter = Counter()
         self._pid_fn = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -187,11 +197,27 @@ class Telemetry:
         seconds: float,
         model: str = "",
         stream: bool = False,
+        ttft_s: float | None = None,
+        queue_s: float | None = None,
+        finish_reason: str | None = None,
+        concurrent: int | None = None,
+        buffered: bool = False,
     ) -> dict:
         bpt = (self.engine.get("kv") or {}).get("bytes_per_token")
         g = gpu_memory()
+        # time per output token after the first one, and how fast the prompt was processed (prefill)
+        decode_s = seconds - ttft_s if ttft_s is not None else None
         r = {
             "t": time.time(),
+            "ttft_s": round(ttft_s, 3) if ttft_s is not None else None,
+            "queue_s": round(queue_s, 3) if queue_s is not None else None,
+            "tpot_ms": round(decode_s / (completion_tokens - 1) * 1000, 1)
+            if decode_s is not None and decode_s > 0 and completion_tokens > 1
+            else None,
+            "prefill_tok_per_s": round(prompt_tokens / ttft_s, 1) if ttft_s and ttft_s > 0 else None,
+            "finish_reason": finish_reason,
+            "concurrent": concurrent,
+            "buffered": buffered,
             "model": model,
             "stream": stream,
             "prompt_tokens": prompt_tokens,
@@ -207,6 +233,39 @@ class Telemetry:
         return r
 
     # ---- reading
+    def record_reject(self, code: str) -> None:
+        """Count a refused request (429 busy, 503 GPU busy, blocked by a guardrail, engine error...)."""
+        with self._lock:
+            self.rejected[code] += 1
+
+    def summary(self, now: float | None = None) -> dict:
+        """Aggregates over the recorded requests: latency percentiles, rolling throughput, refusals."""
+        now = time.time() if now is None else now
+        with self._lock:
+            reqs, rejected = list(self.requests), dict(self.rejected)
+
+        def col(key: str) -> list[float]:
+            return [r[key] for r in reqs if r.get(key) is not None]
+
+        recent = [r for r in reqs if now - r["t"] <= 30]
+        recent_min = [r for r in reqs if now - r["t"] <= 60]
+        # aggregate generation rate over the last 30 s: tokens produced / wall span they occupied
+        span = max((now - min(r["t"] - r["seconds"] for r in recent)), 1e-6) if recent else 0
+        out = {
+            "requests": len(reqs),
+            "requests_last_min": len(recent_min),
+            "tokens_per_s_now": round(sum(r["completion_tokens"] for r in recent) / span, 1) if recent else 0.0,
+            "tokens_generated": sum(r["completion_tokens"] for r in reqs),
+            "rejected": rejected,
+            "max_concurrent_seen": max(col("concurrent"), default=0),
+        }
+        for name, key in (("ttft", "ttft_s"), ("latency", "seconds"), ("queue", "queue_s"),
+                          ("tpot_ms", "tpot_ms"), ("prefill_tok_per_s", "prefill_tok_per_s"),
+                          ("tok_per_s", "tok_per_s")):
+            vals = col(key)
+            out[name] = {"p50": percentile(vals, 50), "p95": percentile(vals, 95), "n": len(vals)}
+        return out
+
     def snapshot(self) -> dict:
         with self._lock:
             eng = dict(self.engine)
@@ -222,6 +281,7 @@ class Telemetry:
             else None,
             "samples": samples,
             "requests": requests,
+            "summary": self.summary(),
         }
 
     # ---- background sampler

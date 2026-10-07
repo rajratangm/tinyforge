@@ -100,8 +100,19 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                  busy: Callable[[], bool] = lambda: False,
                  input_filters: list[Callable[[list[dict]], None]] | None = None,
                  output_filters: list[Callable[[str], str]] | None = None,
-                 on_request: Callable[[dict], None] | None = None) -> APIRouter:
+                 on_request: Callable[[dict], None] | None = None,
+                 on_reject: Callable[[str], None] | None = None) -> APIRouter:
     router = APIRouter(prefix="/v1", dependencies=[Depends(auth)])
+
+    def refuse(status: int, message: str, type_: str, code: str | None = None, headers: dict | None = None):
+        """An error response that is also counted (busy, GPU busy, blocked, engine failure...)."""
+        if on_reject is not None:
+            try:
+                on_reject(code or str(status))
+            except Exception:  # noqa: BLE001 - counting must never change the response
+                pass
+        return _err(status, message, type_, code, headers)
+
     slots, inflight = threading.Condition(), [0]
 
     def acquire(backend: Backend) -> bool:
@@ -132,49 +143,58 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
 
     @router.post("/chat/completions")
     def chat(req: ChatRequest):
+        arrived = time.monotonic()
         if req.n != 1:
-            return _err(400, "Only n=1 is supported.", "invalid_request_error", "unsupported_n")
+            return refuse(400, "Only n=1 is supported.", "invalid_request_error", "unsupported_n")
         msgs = [m.model_dump() for m in req.messages]
         if sum(len(m["content"]) for m in msgs) > MAX_CHARS:
-            return _err(400, f"Messages exceed {MAX_CHARS} characters.", "invalid_request_error", "too_long")
+            return refuse(400, f"Messages exceed {MAX_CHARS} characters.", "invalid_request_error",
+                          "too_long")
         if msgs[-1]["role"] != "user":
-            return _err(400, "The last message must have role 'user'.", "invalid_request_error",
+            return refuse(400, "The last message must have role 'user'.", "invalid_request_error",
                         "bad_messages")
         try:
             for f in in_filters:
                 f(msgs)
         except Blocked as e:
-            return _err(400, str(e), "invalid_request_error", e.code)
+            return refuse(400, str(e), "invalid_request_error", e.code)
         if busy():
-            return _err(503, "The GPU is busy with a running job.", "server_error", "gpu_busy",
+            return refuse(503, "The GPU is busy with a running job.", "server_error", "gpu_busy",
                         {"Retry-After": "30"})
         try:
             backend = get_backend()
         except FileNotFoundError as e:
-            return _err(404, str(e), "invalid_request_error", "model_not_found")
+            return refuse(404, str(e), "invalid_request_error", "model_not_found")
         if not acquire(backend):
-            return _err(429, "The engine is at its concurrency limit; retry shortly.",
+            return refuse(429, "The engine is at its concurrency limit; retry shortly.",
                         "rate_limit_error", "busy",
                         {"Retry-After": "2"})
         stops = [req.stop] if isinstance(req.stop, str) else list(req.stop or [])[:4]
         started = time.monotonic()
+        queue_s, concurrent = started - arrived, inflight[0]
+        first_token_s: list[float | None] = [None]
 
-        def report(text: str) -> None:
-            """Tell the host (telemetry) how big this request was; never let that break the response."""
+        def report(text: str, reason: str | None = None) -> None:
+            """Tell the host (telemetry) how big and how slow this request was; never break the response."""
             if on_request is None:
                 return
             try:
                 on_request({"prompt_tokens": backend.count_tokens("\n".join(m["content"] for m in msgs)),
                             "completion_tokens": backend.count_tokens(text),
                             "seconds": time.monotonic() - started, "model": backend.name,
-                            "stream": req.stream})
+                            "stream": req.stream, "ttft_s": first_token_s[0], "queue_s": queue_s,
+                            "finish_reason": reason, "concurrent": concurrent, "buffered": bool(out_filters)})
             except Exception:  # noqa: BLE001
                 pass
         cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
         prompt_text = "\n".join(m["content"] for m in msgs)
 
         def deltas() -> Iterator[tuple[str, bool]]:
-            return apply_stop(backend.stream(msgs, req.max_tokens, req.temperature, req.top_p), stops)
+            raw = backend.stream(msgs, req.max_tokens, req.temperature, req.top_p)
+            for text, hit in apply_stop(raw, stops):
+                if first_token_s[0] is None and text:
+                    first_token_s[0] = time.monotonic() - started  # time to first token
+                yield text, hit
 
         def finish_reason(stopped: bool, n_tokens: int) -> str:
             return "stop" if stopped or n_tokens < req.max_tokens else "length"
@@ -203,15 +223,15 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                 for out_filter in out_filters:
                     text = out_filter(text)
             except Blocked as e:
-                return _err(400, str(e), "invalid_request_error", e.code)
+                return refuse(400, str(e), "invalid_request_error", e.code)
             except UpstreamError as e:
-                return _err(502, str(e), "server_error", "upstream_error")
+                return refuse(502, str(e), "server_error", "upstream_error")
             except FileNotFoundError as e:  # engines resolve model files lazily, on first use
-                return _err(404, str(e), "invalid_request_error", "model_not_found")
+                return refuse(404, str(e), "invalid_request_error", "model_not_found")
             finally:
                 release()
             n_out = backend.count_tokens(text)
-            report(text)
+            report(text, finish_reason(stopped, n_out))
             if req.stream:  # buffered path: replay the filtered text as SSE
                 return StreamingResponse(replay(text, finish_reason(stopped, n_out)),
                                          media_type="text/event-stream",
@@ -232,8 +252,9 @@ def build_router(auth: Callable[..., None], get_backend: Callable[[], Backend],
                         n += 1
                         parts.append(text)
                         yield chunk({"content": text})
-                report("".join(parts))
-                yield chunk({}, finish_reason(stopped, n))
+                reason = finish_reason(stopped, n)
+                report("".join(parts), reason)
+                yield chunk({}, reason)
                 yield "data: [DONE]\n\n"
             except UpstreamError as e:
                 err = {"error": {"message": str(e), "type": "server_error", "code": "upstream_error"}}
