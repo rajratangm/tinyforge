@@ -557,6 +557,118 @@ def ft_pipeline(
     console.print("[bold green]Fine-tuning pipeline complete.[/]")
 
 
+bench_app = typer.Typer(help="Pick and run standard benchmarks sized to this machine.")
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("list")
+def bench_list(as_json: JsonOpt = False) -> None:
+    """The benchmark catalog: what each measures and how it is run."""
+    from . import bench
+
+    if as_json:
+        from dataclasses import asdict
+
+        print(json.dumps([asdict(b) for b in bench.CATALOG.values()]))
+        return
+    t = Table(title="Benchmarks")
+    for c in ("name", "kind", "items", "measures", "goals"):
+        t.add_column(c)
+    for b in bench.CATALOG.values():
+        t.add_row(b.name, b.kind, str(b.items), b.measures, ",".join(b.goals))
+    console.print(t)
+
+
+@bench_app.command("suggest")
+def bench_suggest(
+    params_b: Annotated[float, typer.Option("--params-b", help="Model size, billions of params.")] = 8.0,
+    quant: Annotated[str, typer.Option(help="4bit | fp16")] = "4bit",
+    minutes: Annotated[float, typer.Option(help="Time budget for the whole suite.")] = 30.0,
+    goal: Annotated[str, typer.Option(help="general|forgetting|reasoning|instruction|sql")] = "general",
+    measured_tps: Annotated[float, typer.Option(help="Measured decode tok/s (overrides estimate).")] = 0.0,
+    server_logprobs: Annotated[bool, typer.Option(help="Server returns logprobs (loglik tasks).")] = False,
+    no_measure: Annotated[bool, typer.Option("--no-measure", help="Skip bandwidth probes.")] = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Recommend benchmarks and sample sizes for this GPU/RAM, model size and time budget."""
+    from . import bench, memtiers
+
+    h = memtiers.probe_hierarchy(measure=not no_measure)
+    recs, ctx = bench.recommend(h, params_b, quant, minutes, goal, measured_tps or None, server_logprobs)
+    if as_json:
+        print(json.dumps({"context": ctx, "recommendations": [r.to_dict() for r in recs]}))
+        return
+    console.print(f"[bold]{params_b:g}B {quant}[/] on this machine: ~{ctx['decode_tps']} tok/s "
+                  f"({escape(ctx['decode_tps_basis'])}); model fits GPU: {ctx['model_fits_gpu']}; "
+                  f"budget {minutes:g} min; goal {goal}  [dim](estimates)[/]")
+    t = Table()
+    for c in ("benchmark", "runnable", "items", "~min", "why"):
+        t.add_column(c)
+    for r in recs:
+        t.add_row(r.name, "yes" if r.runnable else "no", str(r.limit or "-"),
+                  f"{r.est_minutes:g}" if r.runnable else "-", escape(" | ".join(r.why)))
+    console.print(t)
+
+
+@bench_app.command("run")
+def bench_run(
+    names: Annotated[list[str], typer.Argument(help="Benchmark names (see `bench list`).")],
+    server_url: Annotated[str, typer.Option(help="OpenAI-compatible server URL.")] = "",
+    hf_model: Annotated[str, typer.Option(help="Local HF model folder (in-process, 4-bit).")] = "",
+    peft: Annotated[str, typer.Option(help="LoRA adapter folder for --hf-model.")] = "",
+    limit: Annotated[int, typer.Option(help="Items per benchmark (sub-sample).")] = 100,
+    out: Path = Path("bench_out"),
+    compare: Annotated[bool, typer.Option(help="llama-server + LoRA: run adapter on and off.")] = False,
+    csv_path: Annotated[Path | None, typer.Option("--csv", help="sql-exec: the table CSV.")] = None,
+    test_file: Annotated[Path | None, typer.Option(help="sql-exec: JSONL of verified questions.")] = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the commands, run nothing.")] = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Run benchmarks (lm-evaluation-harness, or the built-in SQL execution check) and write a summary."""
+    import httpx
+
+    from . import bench, sqleval
+
+    unknown = [n for n in names if n not in bench.CATALOG]
+    if unknown:
+        console.print(f"[bold red]ERROR[/] unknown benchmark(s) {unknown}; see `tinyforge bench list`")
+        raise typer.Exit(2)
+    labels = [("tuned", 1.0), ("base", 0.0)] if (compare and server_url) else [("model", None)]
+    summary: dict = {"limit": limit, "target": server_url or hf_model, "runs": {}}
+    for name in names:
+        b = bench.CATALOG[name]
+        for label, scale in labels:
+            key = f"{name}/{label}"
+            if b.task == "builtin:sql-exec":
+                if not (server_url and csv_path and test_file):
+                    console.print("[bold red]ERROR[/] sql-exec needs --server-url, --csv and --test-file")
+                    raise typer.Exit(2)
+                if dry_run:
+                    summary["runs"][key] = {"dry_run": f"sql-exec {server_url} n={limit}"}
+                    break
+                variants = ("tuned", "base_instructed") if compare else ("base_instructed",)
+                summary["runs"][name] = sqleval.run(server_url, csv_path, test_file, limit, variants)
+                break
+            cmd = bench.lm_eval_cmd(b, limit, server_url=server_url, hf_model=hf_model, peft=peft,
+                                    out_dir=str(out / key))
+            if dry_run:
+                summary["runs"][key] = {"dry_run": bench.render_cmd(cmd)}
+                continue
+            if scale is not None:
+                httpx.post(f"{server_url.rstrip('/')}/lora-adapters", json=[{"id": 0, "scale": scale}],
+                           timeout=60).raise_for_status()
+            summary["runs"][key] = bench.run_lm_eval(cmd, str(out / key))
+    if not dry_run:
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if as_json:
+        print(json.dumps(summary))
+    else:
+        console.print(summary)
+    failed = [k for k, v in summary["runs"].items() if isinstance(v, dict) and v.get("exit", 0) != 0]
+    raise typer.Exit(1 if failed else 0)
+
+
 export_app = typer.Typer(help="Export models for other runtimes.")
 app.add_typer(export_app, name="export")
 

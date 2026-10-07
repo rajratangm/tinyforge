@@ -37,6 +37,7 @@ tinyforge serve                    # UI at http://127.0.0.1:8000
 | `data pii-scan`, `--pii` | find emails, phones, cards, IDs and credentials; flag, redact or drop |
 | `worker run --spec job.yaml` | run a TrainingJob; `backend: native` or `soup` (layer streaming for models larger than VRAM) |
 | `export gguf` | adapter + base -> GGUF for llama.cpp |
+| `bench list/suggest/run` | pick benchmarks sized to your GPU/RAM/time budget (MMLU, ARC, HellaSwag, GSM8K, IFEval via lm-evaluation-harness, plus a built-in SQL execution check) and run them, base vs tuned |
 | `serve [--engine llamacpp]` | API + UI; OpenAI-compatible `/v1/chat/completions` with guardrails and metrics |
 
 Verified on one RTX 3050 Ti 4 GB laptop (Windows): a 3B and an 8B model fine-tuned through the job spec and served

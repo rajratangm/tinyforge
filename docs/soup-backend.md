@@ -70,3 +70,10 @@ text-to-SQL examples, 200 steps, 9m29s), converted to GGUF (adapter f16, base Q4
 tuned **100%** execution accuracy vs **93%** for the same 8B base told to reply with SQL only. That margin is
 small: the test is easy and templated, so it shows transfer to a new schema, not to harder questions. Details and
 caveats: `benchmarks/e8-penguins-8b-soup.json`.
+
+**Harder, unseen question shapes** (two conditions, BETWEEN, DISTINCT, HAVING, GROUP BY AVG, top-3; same unseen
+table, 100 questions): tuned **98%** vs base told to reply with SQL only **97%**: no meaningful gain
+(`benchmarks/e8-penguins-8b-hard.json`). Reading: for an 8B instruct model, fine-tuning on templated SQL mostly
+fixes output consistency and does not add capability the model already had. The 3B model gained far more
+(98% vs 70%, `benchmarks/e2e-titanic-3b-soup.json`), so expect the biggest wins on smaller models and on
+format-specific or private-data tasks, not on tasks a strong instruct model already does well when prompted.

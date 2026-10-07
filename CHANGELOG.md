@@ -11,6 +11,9 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
   and `--pii flag|redact|drop`.
 - OpenAI-compatible `/v1/models` and `/v1/chat/completions` (JSON + SSE) with guardrails v1 (secret block/redact,
   optional PII policy and denylist, counters on /metrics).
+- `tinyforge bench list|suggest|run`: benchmark catalog with a hardware-aware recommender (decode-speed model from
+  memory bandwidth, time budget, what cannot run and why), `lm-evaluation-harness` runner and a built-in SQL
+  execution-accuracy check. The harness itself has not been run end to end yet.
 - `tinyforge export gguf` and `tinyforge serve --engine llamacpp` (managed llama-server behind the same API, auto
   GPU layers, slots with a short queue). See docs/llamacpp-engine.md.
 - Host RAM/swap gauges on /metrics and a training Grafana dashboard.

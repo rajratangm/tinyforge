@@ -1,0 +1,60 @@
+{
+  "n": 100,
+  "table": "penguins",
+  "table_rows": 344,
+  "server": "http://127.0.0.1:8099",
+  "tuned": {
+    "exec_accuracy": 0.98,
+    "sql_error_rate": 0.0,
+    "exact_match": 0.96,
+    "seconds": 208.1,
+    "sample_misses": [
+      {
+        "q": "What are the 3 highest bill depth mm values?",
+        "gold": "SELECT bill_depth_mm FROM penguins ORDER BY bill_depth_mm DESC LIMIT 3",
+        "pred": "SELECT MAX(bill_depth_mm) FROM penguins",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the average flipper length mm for each sex?",
+        "gold": "SELECT sex, AVG(flipper_length_mm) FROM penguins GROUP BY sex",
+        "pred": "SELECT AVG(flipper_length_mm) FROM penguins GROUP BY sex",
+        "why": "wrong result"
+      }
+    ]
+  },
+  "base_instructed": {
+    "exec_accuracy": 0.97,
+    "sql_error_rate": 0.0,
+    "exact_match": 0.97,
+    "seconds": 202.3,
+    "sample_misses": [
+      {
+        "q": "What is the average flipper length mm for each species?",
+        "gold": "SELECT species, AVG(flipper_length_mm) FROM penguins GROUP BY species",
+        "pred": "SELECT AVG(flipper_length_mm) AS avg_flipper_length_mm, species FROM penguins GROUP BY species",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the average bill depth mm for each island?",
+        "gold": "SELECT island, AVG(bill_depth_mm) FROM penguins GROUP BY island",
+        "pred": "SELECT AVG(bill_depth_mm) FROM penguins GROUP BY island",
+        "why": "wrong result"
+      },
+      {
+        "q": "What is the average flipper length mm for each sex?",
+        "gold": "SELECT sex, AVG(flipper_length_mm) FROM penguins GROUP BY sex",
+        "pred": "SELECT AVG(flipper_length_mm) AS avg_flipper_length_mm, sex FROM penguins GROUP BY sex",
+        "why": "wrong result"
+      }
+    ]
+  },
+  "model": "Llama-3.1-8B-Instruct, LoRA adapter trained 200 steps on 6 tables (templated questions), Q4_K_M GGUF via llama.cpp",
+  "test": "100 verified questions about an UNSEEN table (penguins) in SHAPES never used in training: two conditions, BETWEEN, DISTINCT, HAVING, GROUP BY AVG, top-3 (tinyforge data tabular --hard)",
+  "reading": "No meaningful gain: tuned 98% vs the same base told to reply with SQL only 97% (n=100, difference is noise). On the easy templated test the gap was 100% vs 93% (7 malformed MAX calls). For an 8B instruct model, fine-tuning on templated SQL mostly fixes output consistency; it does not add capability it already had. Contrast: Qwen2.5-3B on titanic scored 98% tuned vs 70% instructed base (benchmarks/e2e-titanic-3b-soup.json).",
+  "caveats": [
+    "n=100, one run, greedy decoding, no confidence interval",
+    "misses on both sides are column-selection mistakes in GROUP BY queries (e.g. dropping the group column)",
+    "tuned and base share the same Q4_K_M weights: the only difference is the LoRA scale (1.0 vs 0.0)"
+  ]
+}
