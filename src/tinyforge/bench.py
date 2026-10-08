@@ -272,6 +272,7 @@ def lm_eval_cmd(
     model_name: str = "default",
     hf_model: str = "",
     peft: str = "",
+    four_bit: bool = False,
     out_dir: str = "bench_out",
     seed: int = 1234,
 ) -> list[str]:
@@ -310,7 +311,11 @@ def lm_eval_cmd(
                 "max_retries=2",
             ]
     elif hf_model:
-        args = f"pretrained={hf_model},load_in_4bit=True"
+        # fp16 by default: recent transformers rejects the `load_in_4bit` kwarg that lm-eval forwards (seen on
+        # Colab), so 4-bit is opt-in for models that do not fit.
+        args = f"pretrained={hf_model},dtype=float16"
+        if four_bit:
+            args += ",load_in_4bit=True"
         if peft:
             args += f",peft={peft}"
         cmd += ["--model", "hf", "--model_args", args, "--batch_size", "4"]

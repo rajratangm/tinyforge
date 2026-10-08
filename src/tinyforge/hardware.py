@@ -54,7 +54,9 @@ def probe() -> HardwareInfo:
             name = props.name
             vram = props.total_memory / 1024**3
             cc = (props.major, props.minor)
-            bf16 = torch.cuda.is_bf16_supported()
+            # Native bf16 needs compute capability >= 8.0. Recent torch says True on older GPUs (T4)
+            # (it emulates bf16 slowly); those should train in fp16 with loss scaling.
+            bf16 = props.major >= 8 and torch.cuda.is_bf16_supported()
     return HardwareInfo(
         os=f"{platform.system()} {platform.release()}",
         cpu_count=psutil.cpu_count(logical=True) or 1,

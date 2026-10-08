@@ -4,15 +4,20 @@ Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed 
 One engine, three front doors: **CLI** (for developers/CI), **REST API**, and a **web UI** (which can later be
 wrapped as a desktop app with Tauri/Electron without changing the backend).
 
-**Status: early alpha (0.1).** Tested on Windows with one NVIDIA GPU; Linux passes the test suite in Docker but has not
-been run on a real GPU box. Install: `pip install tinyforge`, then `tinyforge doctor` to see what else you need
+**Status: early alpha (0.1).** Tested on Windows and on Linux (a Colab T4 GPU), each with one NVIDIA GPU; multi-GPU and
+Kubernetes-with-GPU are not tested yet. Step-by-step Linux, Windows and Colab instructions: [`docs/install.md`](docs/install.md).
+Install: `pip install tinyforge`, then `tinyforge doctor` to see what else you need
 (PyTorch, `pip install "tinyforge[finetune]"`, and optional pieces such as Soup and llama.cpp).
 
 ## Quick start
 
+The same commands work on Linux and Windows (venv activation, environment variables and `curl` differ: see
+[`docs/install.md`](docs/install.md) for both).
+
 ```bash
+python3 -m venv .venv && source .venv/bin/activate        # Windows: py -3 -m venv .venv ; .venv\Scripts\Activate.ps1
 pip install torch --index-url https://download.pytorch.org/whl/cu124   # or /cpu
-pip install -e ".[dev]"            # add ,triton for fused kernels
+pip install tinyforge               # or, from a clone: pip install -e ".[dev]"
 tinyforge doctor                   # hardware + warnings, with fixes
 tinyforge pipeline --preset micro --steps 2000   # doctor -> data -> plan -> train -> eval
 tinyforge generate "ROMEO:" --int8
@@ -45,7 +50,7 @@ tinyforge serve                    # UI at http://127.0.0.1:8000
 | `serve [--engine llamacpp]` | API + UI; OpenAI-compatible `/v1/chat/completions` with guardrails and metrics |
 
 Verified on one RTX 3050 Ti 4 GB laptop (Windows): a 3B and an 8B model fine-tuned through the job spec and served
-locally; see `benchmarks/` and `docs/soup-backend.md`. Early alpha: single GPU, Windows tested only.
+locally; see `benchmarks/` and `docs/soup-backend.md`. Early alpha: single GPU; Windows and a Linux Colab T4 tested.
 
 Model: decoder-only transformer with RoPE, RMSNorm, SwiGLU, tied embeddings, PyTorch SDPA (FlashAttention kernels).
 Presets: `nano` ~1M, `micro` ~12M, `small` ~28M, `base` ~100M.
@@ -94,7 +99,7 @@ terraform apply -var enable_gpu_worker=true -var alert_email=you@example.com
 
 ## Verified results (what was actually run)
 
-Everything below was run on one machine: **Windows 11, RTX 3050 Ti Laptop GPU (4 GB), 16 GB RAM**. Each row links to the
+Unless a row says otherwise it was run on one machine: **Windows 11, RTX 3050 Ti Laptop GPU (4 GB), 16 GB RAM**. Each row links to the
 raw numbers. These are single runs on small test sets, not benchmarks: read the caveats in each JSON file.
 
 | What was tested | Result | Data |
@@ -106,7 +111,8 @@ raw numbers. These are single runs on small test sets, not benchmarks: read the 
 | Chunked cross-entropy (memory saving), Qwen2.5-1.5B 4-bit | peak GPU memory 3.65 -> 2.95 GB, 289 -> 499 tok/s, same loss | [`chunked-ce-qwen1p5b-4bit-rerun.json`](benchmarks/chunked-ce-qwen1p5b-4bit-rerun.json) |
 | llama.cpp inference options, 3B | flash attention ~8% faster; 8-bit KV cache halves the cache (144 -> 76.5 MB); n-gram speculation 129 vs 54.5 tok/s only on repeated requests (no gain on a first request) | [`inference-techniques-qwen3b.json`](benchmarks/inference-techniques-qwen3b.json) |
 | A deliberately **bad model** (random weights, real architecture) | the tool now fails it: `FE010` base model looks untrained, `FE011` degenerate looping output (before the fix it printed "passed"). A model without a chat template gets a clear `FD007` error | `tests/test_bad_models.py` |
-| Test suite | 290 tests pass on Windows (Python 3.12) and on Linux in Docker (Python 3.10 and 3.12, CPU PyTorch) | `pytest -q` |
+| Test suite | 294 tests pass on Windows (Python 3.12) and on Linux in Docker/CI (Python 3.10 and 3.12, CPU PyTorch) | `pytest -q` |
+| Linux + real GPU (Colab, Tesla T4 16 GB, Python 3.13), installed from PyPI | `doctor`, data tools, from-scratch pipeline (all quality gates pass), LoRA fine-tune (held-out loss 1.314 -> 1.271), job-spec worker, server with OpenAI API and secret guardrail, GGUF export and llama.cpp serving all worked. Three bugs found there (benchmark runner on newer transformers, a missing-checkpoint crash, torchao message) are fixed on `main` and ship in the next release; the in-notebook test-suite run still needs a clean re-run | [`notebooks/colab_smoke_test.ipynb`](notebooks/colab_smoke_test.ipynb) |
 
 What these results do **not** show: general-purpose quality gains (the SQL tests use templated questions), results on
 other hardware or operating systems, multi-GPU training, or the standard benchmark runner (`bench run`, built on

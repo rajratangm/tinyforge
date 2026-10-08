@@ -700,7 +700,8 @@ def bench_suggest(
 def bench_run(
     names: Annotated[list[str], typer.Argument(help="Benchmark names (see `bench list`).")],
     server_url: Annotated[str, typer.Option(help="OpenAI-compatible server URL.")] = "",
-    hf_model: Annotated[str, typer.Option(help="Local HF model folder (in-process, 4-bit).")] = "",
+    hf_model: Annotated[str, typer.Option(help="HF model id or local folder (in-process, fp16).")] = "",
+    four_bit: Annotated[bool, typer.Option(help="Load --hf-model in 4-bit.")] = False,
     peft: Annotated[str, typer.Option(help="LoRA adapter folder for --hf-model.")] = "",
     limit: Annotated[int, typer.Option(help="Items per benchmark (sub-sample).")] = 100,
     out: Path = Path("bench_out"),
@@ -736,7 +737,7 @@ def bench_run(
                 summary["runs"][name] = sqleval.run(server_url, csv_path, test_file, limit, variants)
                 break
             cmd = bench.lm_eval_cmd(b, limit, server_url=server_url, hf_model=hf_model, peft=peft,
-                                    out_dir=str(out / key))
+                                    four_bit=four_bit, out_dir=str(out / key))
             if dry_run:
                 summary["runs"][key] = {"dry_run": bench.render_cmd(cmd)}
                 continue

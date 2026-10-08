@@ -87,7 +87,10 @@ def test_lm_eval_commands_for_server_and_hf_targets():
     ll = bench.lm_eval_cmd(bench.CATALOG["arc_easy"], 20, server_url="http://x:1")
     assert "local-completions" in ll and any("/v1/completions" in a for a in ll)
     hf = bench.lm_eval_cmd(bench.CATALOG["mmlu"], 30, hf_model="models/m", peft="runs/a/best")
-    assert "hf" in hf and any("peft=runs/a/best" in a and "load_in_4bit=True" in a for a in hf)
+    assert "hf" in hf and any("peft=runs/a/best" in a and "dtype=float16" in a for a in hf)
+    assert not any("load_in_4bit" in a for a in hf)
+    q = bench.lm_eval_cmd(bench.CATALOG["mmlu"], 30, hf_model="models/m", four_bit=True)
+    assert any("load_in_4bit=True" in a for a in q)
     with pytest.raises(ValueError, match="built-in"):
         bench.lm_eval_cmd(bench.CATALOG["sql-exec"], 10, server_url="http://x")
     with pytest.raises(ValueError, match="either"):
