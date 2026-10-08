@@ -73,7 +73,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "gpus": { "type": "integer", "minimum": 0, "default": 1, "description": "GPUs per node. Worker v1 supports 0 or 1." },
+            "gpus": { "type": "integer", "minimum": 0, "default": 1, "description": "GPUs per node. 0 or 1 run in-process; 2 or more run data-parallel LoRA (backend native, one node)." },
             "nodes": { "type": "integer", "minimum": 1, "default": 1, "description": "Worker v1 supports 1. Multi-node is a later phase." },
             "gpuModel": { "type": "string", "description": "Optional scheduling constraint, e.g. NVIDIA-A100-SXM4-80GB." },
             "minVramGb": { "type": "number", "minimum": 0 },

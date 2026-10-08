@@ -448,7 +448,8 @@ def ft_train(
     base_model: BaseOpt = "HuggingFaceTB/SmolLM2-360M-Instruct", steps: int = 300,
     max_len: int = 512, batch_size: int = 4, grad_accum: int = 4, lr: float = 2e-4,
     lora_r: int = 16, quant: str = "auto", data_dir: Path = Path("data/ft"),
-    run_dir: Path = Path("runs/ft"), as_json: JsonOpt = False,
+    run_dir: Path = Path("runs/ft"),
+    gpus: Annotated[int, typer.Option(help="GPUs for data-parallel training.")] = 1, as_json: JsonOpt = False,
 ) -> None:
     """LoRA fine-tune (resumes from run_dir/last.pt). Best adapter saved to run_dir/best."""
     from . import finetune
@@ -470,7 +471,12 @@ def ft_train(
             _show([e])
 
     try:
-        finetune.train(c, on_event)
+        if gpus > 1:
+            from . import ddp
+
+            ddp.launch(c, gpus, on_event)
+        else:
+            finetune.train(c, on_event)
     except RuntimeError as exc:
         console.print(f"[bold red]{exc}[/]")
         raise typer.Exit(1) from exc

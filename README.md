@@ -136,6 +136,9 @@ memory stays flat, because llama.cpp reserves the cache up front.*
   model that fits in fp16. Its value is fitting larger models: an 8B model trains on a 4 GB GPU via `backend: soup`.
 - Generation speed (HF `generate`, eager) is ~10 tok/s on this GPU; the merged model is the thing to export to
   llama.cpp/vLLM for serving.
-- Single-GPU, single-job (a SQLite job queue exists). Multi-GPU (FSDP/DDP) is not built and untested.
+- Single-job (a SQLite job queue exists). **Multi-GPU:** data-parallel LoRA on one machine (`tinyforge ft train --gpus N`,
+  or `resources.gpus: N` in a job spec) is implemented and tested with real 2-process training on CPU (gloo) on Windows and
+  Linux; it has **not yet been run on real GPUs with NCCL** (`notebooks/kaggle_multi_gpu.ipynb` does that on Kaggle's
+  2x T4). Not built: FSDP/sharded training (models too big for one GPU), multi-node, pipeline parallelism.
 - The API requires `TINYFORGE_API_TOKEN` (bearer) and the server binds to localhost by default; the static UI page
   itself is not authenticated. Put it behind TLS, SSM/VPN or a reverse proxy before exposing it.

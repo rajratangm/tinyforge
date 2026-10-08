@@ -64,9 +64,14 @@ def test_invalid_spec_exits_2(tmp_path, capsys, extra):
     assert _events(capsys)[-1]["event"] == "failed"
 
 
-@pytest.mark.parametrize("extra", ["  resources: {gpus: 2}\n", "  resources: {nodes: 2}\n"])
+@pytest.mark.parametrize("extra", ["  resources: {nodes: 2}\n", "  backend: soup\n  resources: {gpus: 2}\n"])
 def test_unsupported_scale_exits_2(tmp_path, extra):
     assert worker.run_job(_write(tmp_path, MINIMAL + extra), tmp_path / "o") == worker.EXIT_SPEC
+
+
+def test_two_gpus_on_the_native_backend_is_accepted(tmp_path):
+    spec = _write(tmp_path, MINIMAL + "  resources: {gpus: 2}\n")
+    assert worker.run_job(spec, tmp_path / "o", dry_run=True) == worker.EXIT_OK
 
 
 def test_method_full_exits_2(tmp_path):

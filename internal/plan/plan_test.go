@@ -48,7 +48,7 @@ func TestCleanSpecHasNoWarnings(t *testing.T) {
 func TestWarnings(t *testing.T) {
 	cases := map[string]struct{ doc, want string }{
 		"unpinned model": {strings.Replace(base, ", revision: abc123", "", 1), "not pinned"},
-		"multi gpu":      {base + "  resources: {gpus: 4}\n", "gpus>1"},
+		"multi gpu soup": {base + "  backend: soup\n  resources: {gpus: 4}\n", "gpus>1"},
 		"multi node":     {base + "  resources: {nodes: 2}\n", "nodes>1"},
 		"full method":    {strings.Replace(base, "method: lora", "method: full", 1), "not implemented"},
 		"warmup":         {base + "  hyperparameters: {maxSteps: 10, warmupSteps: 10}\n", "never reaches"},
@@ -67,5 +67,21 @@ func TestRenderMentionsGatesAndWarnings(t *testing.T) {
 		if !strings.Contains(out, s) {
 			t.Errorf("output missing %q:\n%s", s, out)
 		}
+	}
+}
+
+func TestMultiGPUNativeIsANoteNotAWarning(t *testing.T) {
+	p := build(t, base+"  resources: {gpus: 4}\n")
+	if hasWarning(p, "gpus>1") {
+		t.Fatalf("native multi-GPU should not warn: %v", p.Warnings)
+	}
+	found := false
+	for _, n := range p.Notes {
+		if strings.Contains(n, "data-parallel") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want a data-parallel note, got %v", p.Notes)
 	}
 }

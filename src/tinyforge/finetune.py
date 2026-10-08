@@ -8,6 +8,7 @@ from __future__ import annotations
 import gc
 import json
 import math
+import os
 import random
 import time
 from collections.abc import Callable
@@ -68,7 +69,7 @@ def load_base(name: str, quant: str, bf16: bool, device: str):
         bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                  bnb_4bit_compute_dtype=dt, bnb_4bit_use_double_quant=True)
         return AutoModelForCausalLM.from_pretrained(name, quantization_config=bnb,
-                                                    device_map={"": 0}, dtype=dt)
+                                                    device_map={"": torch.cuda.current_device()}, dtype=dt)
     return AutoModelForCausalLM.from_pretrained(name, dtype=dt).to(device)
 
 
@@ -265,6 +266,65 @@ def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp, ce_chun
 # ---------------------------------------------------------------- training
 
 
+def dist_setup() -> tuple[int, int]:
+    """(rank, world_size). Data parallel is enabled by launching under torchrun (WORLD_SIZE > 1); each process
+    owns one GPU (LOCAL_RANK) and the LoRA gradients are averaged across them every optimizer step."""
+    world = int(os.environ.get("WORLD_SIZE", "1"))
+    if world <= 1:
+        return 0, 1
+    import torch.distributed as dist
+
+    rank, local = int(os.environ["RANK"]), int(os.environ.get("LOCAL_RANK", os.environ["RANK"]))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local)
+    if not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() and dist.is_nccl_available() else "gloo"
+        init = os.environ.get("TINYFORGE_DIST_INIT")  # file rendezvous (Windows, where torchrun cannot start)
+        if init:
+            dist.init_process_group(backend, init_method=init, rank=rank, world_size=world)
+        else:
+            dist.init_process_group(backend)
+    return rank, world
+
+
+def _allreduce_mean_grads(params: list, world: int) -> None:
+    """Average .grad across ranks in one flat all-reduce per dtype (LoRA grads are small)."""
+    import torch.distributed as dist
+
+    for p in params:
+        if p.grad is None:
+            p.grad = torch.zeros_like(p)
+    by_dtype: dict = {}
+    for p in params:
+        by_dtype.setdefault(p.grad.dtype, []).append(p)
+    for ps in by_dtype.values():
+        flat = torch._utils._flatten_dense_tensors([p.grad for p in ps])
+        dist.all_reduce(flat)
+        flat /= world
+        for p, g in zip(ps, torch._utils._unflatten_dense_tensors(flat, [p.grad for p in ps]), strict=True):
+            p.grad.copy_(g)
+
+
+def _scalar(value: float, device: str):
+    return torch.tensor([value], dtype=torch.float64, device=device if device == "cuda" else "cpu")
+
+
+def _dist_max(value: float, device: str) -> float:
+    import torch.distributed as dist
+
+    t = _scalar(value, device)
+    dist.all_reduce(t, op=dist.ReduceOp.MAX)
+    return t.item()
+
+
+def _dist_sum(value: float, device: str) -> float:
+    import torch.distributed as dist
+
+    t = _scalar(value, device)
+    dist.all_reduce(t)
+    return t.item()
+
+
 def _is_mem_error(exc: BaseException) -> bool:
     s = str(exc)
     return (isinstance(exc, torch.OutOfMemoryError) or "out of memory" in s.lower()
@@ -281,11 +341,15 @@ def _lr(step: int, c: FTConfig) -> float:
 def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 
+    rank, world = dist_setup()
+    lead = rank == 0  # only the lead rank logs, writes files and reports events
     emit = on_event or (lambda e: None)
     c.run_dir.mkdir(parents=True, exist_ok=True)
-    log = open(c.run_dir / "metrics.jsonl", "a", buffering=1)
+    log = open(c.run_dir / "metrics.jsonl", "a", buffering=1) if lead else open(os.devnull, "w")
 
     def event(kind: str, **kw):
+        if not lead:
+            return
         e = {"event": kind, "t": time.time(), **kw}
         log.write(json.dumps(e) + "\n")
         emit(e)
@@ -302,7 +366,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     if rep.has_errors:
         event("failed", reason="plan did not fit hardware")
         raise RuntimeError("Fine-tuning plan does not fit available hardware; see diagnostics.")
-    (c.run_dir / "ft_config.json").write_text(c.model_dump_json(indent=2))
+    if lead:
+        (c.run_dir / "ft_config.json").write_text(c.model_dump_json(indent=2))
 
     device = hw.device
     random.seed(c.seed)
@@ -329,6 +394,11 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
         r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=c.lora_dropout,
         target_modules="all-linear", task_type="CAUSAL_LM"))
     trainable = [p for p in model.parameters() if p.requires_grad]
+    if world > 1:  # the same seed already gives the same init; broadcasting makes it certain
+        import torch.distributed as dist
+
+        for p in trainable:
+            dist.broadcast(p.data, 0)
     n_train = sum(p.numel() for p in trainable)
     opt = torch.optim.AdamW(trainable, lr=c.lr, weight_decay=0.0, betas=(0.9, 0.999))
     scaler = torch.amp.GradScaler(device, enabled=amp is torch.float16)
@@ -346,7 +416,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
           device=device, precision=str(amp), quant=c.quant, max_steps=c.max_steps,
           train_examples=len(tr), val_examples=len(va), config=c.model_dump(mode="json"))
 
-    eps = c.examples_per_step or c.batch_size * c.grad_accum
+    eps_global = c.examples_per_step or c.batch_size * c.grad_accum
+    eps = max(1, eps_global // world)  # per-rank share; the global batch stays ~eps_global
     budget_tokens = c.token_budget or c.batch_size * c.max_len
     ce = c.ce_chunk if c.chunked_ce else 0
     eval_bs = min(c.batch_size, 4)
@@ -363,11 +434,12 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                           f"random guessing gives ({rand_loss:.2f} = ln of the {len(tok)}-token vocabulary). "
                           "Training will lower the loss, but the result will not be a useful model.",
                   fix="Start from a pretrained model (e.g. an instruct checkpoint), not random weights.")
-        model.save_pretrained(c.run_dir / "best")  # step-0 adapter == base; never ship worse than base
+        if lead:
+            model.save_pretrained(c.run_dir / "best")  # step-0 adapter == base; never ship worse than base
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
     order: list[list[int]] = []
-    rng = random.Random(c.seed + step)
+    rng = random.Random(c.seed + step + 7919 * rank)  # each rank shuffles independently
     t0, tok_count, bad, regress, spill_warned, oom_count = time.time(), 0, 0, 0, False, 0
     while step < c.max_steps:
         for g in opt.param_groups:
@@ -391,6 +463,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
             if not _is_mem_error(exc):
                 raise
             oom = True
+        if world > 1:  # recovery must be a collective decision, or ranks fall out of step
+            oom = _dist_max(1.0 if oom else 0.0, device) > 0
         if oom:
             # Adaptive recovery: the estimator cannot see cuBLAS workspaces or fragmentation, so on a
             # memory failure drop this step's partial grads, shrink the token budget and retry.
@@ -410,6 +484,9 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                   f"(token budget now {budget_tokens:,}).",
                   fix="The planner's estimate was too optimistic for this model/GPU.")
             continue
+        if world > 1:
+            _allreduce_mean_grads(trainable, world)
+            loss_acc = _dist_sum(loss_acc, device) / world
         scaler.unscale_(opt)
         gnorm = torch.nn.utils.clip_grad_norm_(trainable, c.grad_clip).item()
         if not math.isfinite(loss_acc) or not math.isfinite(gnorm):
@@ -432,6 +509,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
         if step % 5 == 0 or step == 1:
             dt = time.time() - t0
             mem = torch.cuda.max_memory_allocated() / 1024**3 if device == "cuda" else 0.0
+            if world > 1:
+                tok_count = int(_dist_sum(tok_count, device))
             event("step", step=step, loss=loss_acc, lr=_lr(step, c), grad_norm=gnorm,
                   tok_per_s=tok_count / dt if dt > 0 else 0.0, peak_mem_gb=mem)
             t0, tok_count = time.time(), 0
@@ -447,22 +526,41 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
             event("eval", step=step, val_loss=vl, train_loss=loss_acc, val_ppl=math.exp(min(vl, 20)))
             if vl < best_val:
                 best_val, regress = vl, 0
-                model.save_pretrained(c.run_dir / "best")
+                if lead:
+                    model.save_pretrained(c.run_dir / "best")
             else:
                 regress += 1
                 if regress >= 2:
                     event("diagnostic", code="FT002", level="warn",
                           message=f"Val loss worse than best for {regress} evals: overfitting.",
                           fix="Fewer steps, lower LR, or more data. The best adapter is kept.")
-        if step % c.eval_interval == 0 or step == c.max_steps:
+        if lead and (step % c.eval_interval == 0 or step == c.max_steps):
             tmp = last.with_suffix(".tmp")
             torch.save({"adapter": get_peft_model_state_dict(model), "opt": opt.state_dict(),
                         "step": step, "best_val": best_val}, tmp)
             tmp.replace(last)
 
+    div = None
+    if world > 1:  # proof the replicas stayed identical: max |param - rank0's param| over all ranks
+        import torch.distributed as dist
+
+        worst = 0.0
+        for p in trainable:
+            ref = p.detach().clone()
+            dist.broadcast(ref, 0)
+            worst = max(worst, (p.detach() - ref).abs().max().item())
+        div = _dist_max(worst, device)
     summary = {"steps": step, "best_val_loss": best_val, "best_val_ppl": math.exp(min(best_val, 20)),
                "trainable_params": n_train,
                "peak_mem_gb": torch.cuda.max_memory_allocated() / 1024**3 if device == "cuda" else 0.0}
+    summary["world_size"] = world
+    if div is not None:
+        summary["ddp_max_param_divergence"] = div
     event("finished", **summary)
     log.close()
+    if world > 1:
+        import torch.distributed as dist
+
+        dist.barrier()
+        dist.destroy_process_group()
     return summary

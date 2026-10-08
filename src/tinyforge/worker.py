@@ -81,8 +81,8 @@ def check_supported(doc: dict) -> None:
         raise SpecError("method=full is not implemented by worker v1")
     if res.get("nodes", 1) > 1:
         raise SpecError("nodes>1 is not supported by worker v1 (single node only)")
-    if res.get("gpus", 1) > 1:
-        raise SpecError("gpus>1 is not supported by worker v1 (0 or 1 GPU)")
+    if res.get("gpus", 1) > 1 and s.get("backend", "native") != "native":
+        raise SpecError("gpus>1 is only supported by backend=native (data-parallel LoRA on one node)")
     if s.get("backend", "native") == "soup" and res.get("gpus", 1) < 1:
         raise SpecError("backend=soup needs a GPU (resources.gpus >= 1)")
 
@@ -247,7 +247,13 @@ def run_job(spec_path: Path, out: Path, dry_run: bool = False) -> int:
             if isinstance(summary, int):
                 return summary
         else:
-            summary = finetune.train(cfg, on_event)
+            n_gpus = int(s.get("resources", {}).get("gpus", 1))
+            if n_gpus > 1:
+                from . import ddp
+
+                summary = ddp.launch(cfg, n_gpus, on_event)
+            else:
+                summary = finetune.train(cfg, on_event)
     except Preempted:
         # Weaker than the contract: we stop immediately instead of finishing the step. Checkpoints are written
         # atomically, so the retry resumes from the last one (at most checkpoint.everySteps of work is lost).

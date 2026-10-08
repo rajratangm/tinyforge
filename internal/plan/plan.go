@@ -31,7 +31,11 @@ func Build(j *jobspec.Job) *Plan {
 		p.Warnings = append(p.Warnings, "nodes>1: worker v1 supports a single node only")
 	}
 	if j.Spec.Resources.GPUs > 1 {
-		p.Warnings = append(p.Warnings, "gpus>1: worker v1 supports 0 or 1 GPU per node")
+		if j.Spec.Backend == "soup" {
+			p.Warnings = append(p.Warnings, "gpus>1: backend soup uses a single GPU; the job would be rejected")
+		} else {
+			p.Notes = append(p.Notes, "gpus>1: data-parallel LoRA on one node (Linux + NCCL); each GPU takes about 1/N of every batch")
+		}
 	}
 	if j.Spec.Model.Revision == "" {
 		p.Warnings = append(p.Warnings, "model.revision is not pinned; results are not reproducible and a cluster with requirePinnedModels would reject it")
