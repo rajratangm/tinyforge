@@ -504,7 +504,10 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                 idx = order.pop()[:eps - got]
                 step_batches.append(idx)
                 got += len(idx)
-            for idx in _share(step_batches, tr, rank, world):
+            mine = _share(step_batches, tr, rank, world)
+            if not mine:  # fewer micro-batches than GPUs: this GPU idles but must still prime the scaler
+                scaler.scale(torch.zeros((), device=device))
+            for idx in mine:
                 b = tr.collate(idx, device)
                 w = len(idx) / eps
                 with torch.autocast(device, dtype=amp, enabled=amp is not None):

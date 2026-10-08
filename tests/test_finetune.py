@@ -1,5 +1,7 @@
 import random
 
+import pytest
+
 from tinyforge import finetune
 from tinyforge.finetune import ChatDataset, FTConfig
 from tinyforge.ft_data import SECRET, _is_val, normalize
@@ -121,3 +123,27 @@ def test_multi_gpu_split_is_complete_balanced_and_identical_on_every_rank():
 
     assert abs(load(shares[0]) - load(shares[1])) <= 400  # balanced to within the largest single batch
     assert shares == [finetune._share(batches, DS, r, 2) for r in range(2)]  # deterministic
+
+
+def test_an_idle_gpu_primes_the_loss_scaler_so_unscale_does_not_crash():
+    import torch
+
+    p = torch.nn.Parameter(torch.ones(2))
+    opt = torch.optim.SGD([p], lr=0.1)
+    scaler = torch.amp.GradScaler("cpu", enabled=True)
+    with pytest.raises(AssertionError):  # seen on a real 2-GPU run: a rank that never called scale()
+        scaler.unscale_(opt)
+    scaler = torch.amp.GradScaler("cpu", enabled=True)
+    scaler.scale(torch.zeros(()))  # what an idle rank now does
+    p.grad = torch.zeros_like(p)  # the all-reduce hands it the other ranks' summed gradient
+    scaler.unscale_(opt)
+    scaler.step(opt)
+    scaler.update()
+
+
+def test_fewer_micro_batches_than_gpus_leaves_one_idle_but_loses_nothing():
+    class DS:
+        items = [([1] * 10, [1])] * 4
+
+    shares = [finetune._share([[0, 1, 2, 3]], DS, r, 2) for r in range(2)]
+    assert sorted(len(s) for s in shares) == [0, 1]

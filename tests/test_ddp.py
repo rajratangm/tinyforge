@@ -112,3 +112,12 @@ def test_by_default_every_gpu_gets_a_full_batch(tiny, monkeypatch):
     one = finetune.train(_cfg(tiny, "single_b"))
     assert s["examples_per_step_global"] == 2 * one["examples_per_step_global"]  # N x the examples per step
     assert s["ddp_max_param_divergence"] == 0.0
+
+
+def test_a_step_with_fewer_micro_batches_than_gpus_still_trains(tiny, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    # a huge token budget packs the whole step into one micro-batch, so one of the two GPUs has nothing to do
+    s = ddp.launch(_cfg(tiny, "ddp_idle", split_batch=True, token_budget=1_000_000), 2)
+    assert s["ddp_max_param_divergence"] == 0.0
+    ev = _evals(tiny / "ddp_idle")
+    assert ev[-1] < ev[0]
