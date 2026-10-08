@@ -74,3 +74,34 @@ def test_turn_terminator_follows_template_not_eos():
             return "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in msgs)
 
     assert turn_terminator(Tok()) == "<|im_end|>"
+
+
+def test_eval_recomputes_an_fp16_overflow_in_bf16_instead_of_reporting_nan():
+    import torch
+
+    class Out:
+        def __init__(self, loss):
+            self.loss = loss
+
+    class Overflowy(torch.nn.Module):  # NaN under fp16 autocast, fine otherwise: a bf16-trained model on a T4
+        def forward(self, **b):
+            bad = torch.get_autocast_dtype("cpu") == torch.float16 and torch.is_autocast_enabled("cpu")
+            return Out(torch.tensor(float("nan") if bad else 2.0))
+
+    class DS:
+        def __len__(self):
+            return 4
+
+        def collate(self, idx, device):
+            return {"labels": torch.ones((len(idx), 3), dtype=torch.long)}
+
+    stats: dict = {}
+    loss = finetune.eval_loss(Overflowy(), DS(), 4, 2, "cpu", torch.float16, 0, stats)
+    assert loss == 2.0 and stats["fp16_retries"] == 2
+    # With nothing to fall back on (no fp16), a NaN stays a NaN: no silent hiding.
+    class AlwaysNan(Overflowy):
+        def forward(self, **b):
+            return Out(torch.tensor(float("nan")))
+
+    assert finetune.eval_loss(AlwaysNan(), DS(), 4, 2, "cpu", torch.float16, 0, {}) != finetune.eval_loss(
+        Overflowy(), DS(), 4, 2, "cpu", torch.float16, 0, {})

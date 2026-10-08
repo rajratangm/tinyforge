@@ -50,11 +50,11 @@ def _write_data(d):
         (d / name).write_text("\n".join(json.dumps(r) for r in part), encoding="utf-8")
 
 
-def _cfg(tmp_path, run: str) -> FTConfig:
+def _cfg(tmp_path, run: str, **kw) -> FTConfig:
     return FTConfig(base_model=str(tmp_path / "model"), run_dir=tmp_path / run, data_dir=tmp_path / "data",
                     max_len=64, max_steps=20, batch_size=4, grad_accum=2, lr=2e-3, warmup_steps=2, lora_r=4,
                     lora_alpha=8, quant="none", auto_plan=False, eval_interval=10, eval_examples=8,
-                    chunked_ce=False, seed=1)
+                    chunked_ce=False, seed=1, **kw)
 
 
 def _evals(run_dir):
@@ -80,7 +80,7 @@ def test_single_process_baseline_learns(tiny):
 def test_two_process_training_keeps_replicas_identical_and_learns(tiny, monkeypatch):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")  # children see no GPU: CPU + gloo, even on a GPU machine
     events: list[dict] = []
-    s = ddp.launch(_cfg(tiny, "ddp"), 2, events.append)
+    s = ddp.launch(_cfg(tiny, "ddp", split_batch=True), 2, events.append)
     assert s["world_size"] == 2
     assert s["ddp_max_param_divergence"] == 0.0  # every rank holds exactly rank 0's LoRA weights
     ev = _evals(tiny / "ddp")
@@ -104,3 +104,11 @@ def test_launch_reports_a_failing_worker(tiny, monkeypatch):
     bad = _cfg(tiny, "bad").model_copy(update={"base_model": str(tiny / "does-not-exist")})
     with pytest.raises(RuntimeError):
         ddp.launch(bad, 2)
+
+
+def test_by_default_every_gpu_gets_a_full_batch(tiny, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    s = ddp.launch(_cfg(tiny, "ddp_full"), 2)
+    one = finetune.train(_cfg(tiny, "single_b"))
+    assert s["examples_per_step_global"] == 2 * one["examples_per_step_global"]  # N x the examples per step
+    assert s["ddp_max_param_divergence"] == 0.0

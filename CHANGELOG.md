@@ -6,7 +6,7 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 ## [0.1.1] - 2026-10-08
 ### Added
 - Multi-GPU: data-parallel LoRA fine-tuning on one machine (`tinyforge ft train --gpus N`, or `resources.gpus: N`
-  in a job spec). Each GPU takes its share of every batch and the LoRA gradients are averaged each step; the run
+  in a job spec). Each GPU trains on its own full batch (effective batch N x; `--split-batch` splits one batch instead) and the LoRA gradients are averaged each step; the run
   proves the replicas stayed identical. Tested with real 2-process runs (CPU, gloo) on Windows and Linux; the
   Kaggle 2x T4 notebook (`notebooks/kaggle_multi_gpu.ipynb`) measures real NCCL runs.
 - `docs/install.md`: Linux, Windows and Colab/Kaggle instructions side by side, with what is tested where.

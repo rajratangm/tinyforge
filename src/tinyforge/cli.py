@@ -449,14 +449,18 @@ def ft_train(
     max_len: int = 512, batch_size: int = 4, grad_accum: int = 4, lr: float = 2e-4,
     lora_r: int = 16, quant: str = "auto", data_dir: Path = Path("data/ft"),
     run_dir: Path = Path("runs/ft"),
-    gpus: Annotated[int, typer.Option(help="GPUs for data-parallel training.")] = 1, as_json: JsonOpt = False,
+    gpus: Annotated[int, typer.Option(help="GPUs for data-parallel training.")] = 1,
+    split_batch: Annotated[bool, typer.Option(help="With --gpus N: split one batch across GPUs instead of "
+                                              "giving each GPU a full batch.")] = False,
+    as_json: JsonOpt = False,
 ) -> None:
     """LoRA fine-tune (resumes from run_dir/last.pt). Best adapter saved to run_dir/best."""
     from . import finetune
 
     c = _ft_cfg(base_model, run_dir, data_dir, max_steps=steps, max_len=max_len, batch_size=batch_size,
                 grad_accum=grad_accum, lr=lr, lora_r=lora_r, lora_alpha=2 * lora_r, quant=quant,
-                eval_interval=max(1, min(50, steps // 4)), warmup_steps=min(20, max(1, steps // 10)))
+                split_batch=split_batch, eval_interval=max(1, min(50, steps // 4)),
+                warmup_steps=min(20, max(1, steps // 10)))
 
     def on_event(e: dict) -> None:
         if as_json:

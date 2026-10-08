@@ -34,7 +34,7 @@ func Build(j *jobspec.Job) *Plan {
 		if j.Spec.Backend == "soup" {
 			p.Warnings = append(p.Warnings, "gpus>1: backend soup uses a single GPU; the job would be rejected")
 		} else {
-			p.Notes = append(p.Notes, "gpus>1: data-parallel LoRA on one node (Linux + NCCL); each GPU takes about 1/N of every batch")
+			p.Notes = append(p.Notes, "gpus>1: data-parallel LoRA on one node (Linux + NCCL); each GPU trains on its own full batch, so examples per step scale with the GPU count")
 		}
 	}
 	if j.Spec.Model.Revision == "" {

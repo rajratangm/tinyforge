@@ -39,6 +39,9 @@ class FTConfig(BaseModel):
     batch_size: int = 4  # micro-batch examples at max_len (the planner may raise it)
     grad_accum: int = 4  # examples per optimizer step = batch_size * grad_accum
     examples_per_step: int = 0  # set by the planner; 0 -> batch_size * grad_accum
+    # multi-GPU batches. False: every GPU gets a full batch (N x examples per step, near-linear speedup).
+    # True: one batch is split across GPUs (same math as 1 GPU, but less speedup).
+    split_batch: bool = False
     token_budget: int = 0  # max padded tokens per micro-batch; 0 -> batch_size * max_len
     lr: float = 2e-4
     warmup_steps: int = 20
@@ -247,17 +250,30 @@ class ChatDataset:
         return {"input_ids": ids.to(device), "labels": lab.to(device), "attention_mask": att.to(device)}
 
 
+def _forward_loss(model, b: dict, device: str, amp, ce_chunk: int):
+    with torch.autocast(device, dtype=amp, enabled=amp is not None):
+        return causal_lm_loss(model, b, ce_chunk) if ce_chunk else model(**b).loss
+
+
 @torch.no_grad()
-def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp, ce_chunk: int = 0) -> float:
-    """Token-weighted mean loss over the first n examples (fixed set => comparable across runs)."""
+def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp, ce_chunk: int = 0,
+              stats: dict | None = None) -> float:
+    """Token-weighted mean loss over the first n examples (fixed set => comparable across runs).
+
+    Models trained in bf16 can overflow in fp16 (seen on a T4: NaN held-out loss, training still finite).
+    A batch that comes out non-finite under fp16 is recomputed in (emulated) bf16 and counted in
+    stats["fp16_retries"]; if it is still non-finite the NaN is reported as it is."""
     was_training = model.training
     model.eval()
     total, count = 0.0, 0
     idx = list(range(min(n, len(ds))))
     for i in range(0, len(idx), bs):
         b = ds.collate(idx[i:i + bs], device)
-        with torch.autocast(device, dtype=amp, enabled=amp is not None):
-            loss = causal_lm_loss(model, b, ce_chunk) if ce_chunk else model(**b).loss
+        loss = _forward_loss(model, b, device, amp, ce_chunk)
+        if amp is torch.float16 and not torch.isfinite(loss):
+            loss = _forward_loss(model, b, device, torch.bfloat16, ce_chunk)
+            if stats is not None:
+                stats["fp16_retries"] = stats.get("fp16_retries", 0) + 1
         ntok = (b["labels"][:, 1:] != -100).sum().item()
         total += loss.item() * ntok
         count += ntok
@@ -266,6 +282,14 @@ def eval_loss(model, ds: ChatDataset, n: int, bs: int, device: str, amp, ce_chun
 
 
 # ---------------------------------------------------------------- training
+
+
+def _note_fp16_retries(event, stats: dict, step: int) -> None:
+    n = stats.pop("fp16_retries", 0)
+    if n:
+        event("diagnostic", code="FT007", level="info", fix="",
+              message=f"{n} evaluation batch(es) overflowed in fp16 at step {step} and were recomputed in "
+                      "bf16. The base model was trained in bf16; fp16 can overflow on some inputs.")
 
 
 def dist_setup() -> tuple[int, int]:
@@ -419,13 +443,15 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
           train_examples=len(tr), val_examples=len(va), config=c.model_dump(mode="json"))
 
     eps_global = c.examples_per_step or c.batch_size * c.grad_accum
-    eps = max(1, eps_global // world)  # per-rank share; the global batch stays ~eps_global
+    eps = max(1, eps_global // world) if c.split_batch else eps_global  # examples per GPU per optimizer step
     budget_tokens = c.token_budget or c.batch_size * c.max_len
     ce = c.ce_chunk if c.chunked_ce else 0
     eval_bs = min(c.batch_size, 4)
+    ev_stats: dict = {}
     model.train()
     if step == 0:
-        base_val = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce)
+        base_val = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce, ev_stats)
+        _note_fp16_retries(event, ev_stats, 0)
         best_val = base_val
         event("eval", step=0, val_loss=base_val, train_loss=None,
               val_ppl=math.exp(min(base_val, 20)))
@@ -524,7 +550,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                       fix="Lower --max-len or --batch-size, or use --quant 4bit.")
 
         if step % c.eval_interval == 0 or step == c.max_steps:
-            vl = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce)
+            vl = eval_loss(model, va, c.eval_examples, eval_bs, device, amp, ce, ev_stats)
+            _note_fp16_retries(event, ev_stats, step)
             event("eval", step=step, val_loss=vl, train_loss=loss_acc, val_ppl=math.exp(min(vl, 20)))
             if vl < best_val:
                 best_val, regress = vl, 0
@@ -556,6 +583,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                "trainable_params": n_train,
                "peak_mem_gb": torch.cuda.max_memory_allocated() / 1024**3 if device == "cuda" else 0.0}
     summary["world_size"] = world
+    summary["examples_per_step_global"] = eps * world
     if div is not None:
         summary["ddp_max_param_divergence"] = div
     event("finished", **summary)

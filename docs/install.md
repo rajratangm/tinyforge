@@ -140,7 +140,7 @@ Exit codes are listed in `spec/worker-contract.md` (for example 75 means "retry 
 - **GPU precision.** GPUs older than Ampere (compute capability below 8.0, such as the T4) have no native bf16;
   tinyforge trains them in fp16 with loss scaling. Ampere and newer use bf16.
 - **Multi-GPU.** `tinyforge ft train --gpus 2` (or `resources: {gpus: 2}` in a job spec) trains LoRA data-parallel on
-  one machine: each GPU processes its share of every batch and the small LoRA gradients are averaged each step. It
+  one machine: each GPU trains on its own full batch (so the effective batch is N times larger; `--split-batch` splits one batch instead) and the small LoRA gradients are averaged each step. It
   needs Linux (NCCL does not exist on Windows). Tested with real 2-process runs on CPU; real-GPU NCCL runs are what
   `notebooks/kaggle_multi_gpu.ipynb` (Kaggle, 2x T4) measures. Not available: sharding one model across GPUs (FSDP),
   multi-node, and the `soup` backend with more than one GPU.
