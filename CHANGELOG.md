@@ -23,6 +23,8 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
   command on import: tinyforge now turns off TensorFlow/Flax/JAX in `transformers` (it is PyTorch-only).
 - GPUs without native bf16 (compute capability below 8, e.g. T4) were treated as bf16-capable and trained on slow
   emulation; they now use fp16 with loss scaling.
+- Held-out loss could come out NaN on fp16 GPUs (a bf16-trained model overflowing during evaluation while training
+  stayed finite); an overflowing batch is now recomputed in bf16 and reported as diagnostic FT007.
 - `bench run --hf-model` passed `load_in_4bit` to newer transformers, which rejects it; it now loads fp16 and
   `--four-bit` is opt-in.
 
