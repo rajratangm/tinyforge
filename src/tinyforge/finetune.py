@@ -469,6 +469,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     order: list[list[int]] = []
     rng = random.Random(c.seed + step + 7919 * rank)  # each rank shuffles independently
     t0, tok_count, bad, regress, spill_warned, oom_count = time.time(), 0, 0, 0, False, 0
+    sync_t, win_start = 0.0, step  # seconds spent in cross-GPU collectives (waiting for the slowest GPU)
     while step < c.max_steps:
         for g in opt.param_groups:
             g["lr"] = _lr(step, c)
@@ -492,7 +493,9 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                 raise
             oom = True
         if world > 1:  # recovery must be a collective decision, or ranks fall out of step
+            t_sync = time.time()
             oom = _dist_max(1.0 if oom else 0.0, device) > 0
+            sync_t += time.time() - t_sync  # first collective after compute: the wait for the slowest GPU
         if oom:
             # Adaptive recovery: the estimator cannot see cuBLAS workspaces or fragmentation, so on a
             # memory failure drop this step's partial grads, shrink the token budget and retry.
@@ -513,8 +516,10 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                   fix="The planner's estimate was too optimistic for this model/GPU.")
             continue
         if world > 1:
+            t_sync = time.time()
             _allreduce_mean_grads(trainable, world)
             loss_acc = _dist_sum(loss_acc, device) / world
+            sync_t += time.time() - t_sync
         scaler.unscale_(opt)
         gnorm = torch.nn.utils.clip_grad_norm_(trainable, c.grad_clip).item()
         if not math.isfinite(loss_acc) or not math.isfinite(gnorm):
@@ -540,8 +545,9 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
             if world > 1:
                 tok_count = int(_dist_sum(tok_count, device))
             event("step", step=step, loss=loss_acc, lr=_lr(step, c), grad_norm=gnorm,
-                  tok_per_s=tok_count / dt if dt > 0 else 0.0, peak_mem_gb=mem)
-            t0, tok_count = time.time(), 0
+                  tok_per_s=tok_count / dt if dt > 0 else 0.0, peak_mem_gb=mem,
+                  sync_s_per_step=sync_t / max(1, step - win_start))
+            t0, tok_count, sync_t, win_start = time.time(), 0, 0.0, step
             if device == "cuda" and not spill_warned and mem > 0.97 * hw.vram_gb:
                 spill_warned = True
                 event("diagnostic", code="FT005", level="error",
