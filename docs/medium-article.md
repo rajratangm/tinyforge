@@ -1,48 +1,40 @@
-# I built a tool that fine-tunes LLMs on a 4 GB laptop GPU, then tested it on Colab and Kaggle until it broke
+# Teach an AI model new tricks on the laptop you already own (and know if it worked)
 
-*tinyforge: train, check, and serve small language models on the GPU you already own. Windows and Linux, one `pip install`.*
+*tinyforge: fine-tune, check and serve small language models on your own GPU. Windows and Linux, one `pip install`. This guide works for a complete beginner and for an engineer who wants the flags, the exit codes and the honest numbers.*
 
 ---
 
-Most "fine-tune an LLM" tutorials quietly assume you have a 24 GB card or a cloud budget. I have a laptop with an RTX 3050 Ti and **4 GB of VRAM**. That is not enough to load an 8-billion-parameter model, let alone train one.
+## The 30-second version
 
-So I built **tinyforge**, an open-source tool whose goal is simple: *you point it at the hardware you have, and it figures out how to train something useful on it, and then tells you honestly whether the result is any good.*
-
-This post is the story of what it does, how to use it, and the part most project write-ups skip: **what broke when I tested it on machines that weren't mine.**
-
-```bash
-pip install tinyforge
-```
+- **What it is:** a free, open-source command-line tool (Apache-2.0) that takes an existing AI model and teaches it your task, using the graphics card you already have, even a small 4 GB laptop one.
+- **What makes it different:** it does not just say "training finished". It compares your tuned model with the original on data the model never saw, and **fails loudly** if the result is not better.
+- **How to get it:** `pip install tinyforge` (current version **0.1.2**).
+- **Where it was tested:** a Windows laptop (RTX 3050 Ti, 4 GB), a free Google Colab T4, and a Kaggle machine with two T4s. Not tested: AMD/Apple GPUs, Kubernetes with GPUs, multi-machine training.
 
 Repo: https://github.com/rajratangm/tinyforge
 
 ---
 
-## What it does, in one sentence
+## Part 1. For everyone: what is "fine-tuning"?
 
-tinyforge fine-tunes, evaluates, and serves small-to-mid LLMs on whatever NVIDIA GPU you have, and it checks that the tuned model is actually better than the base model instead of just reporting that training finished.
+Think of a big AI model as a student who has read half the internet. They know a little about everything, but they do not know *your* thing: your company's way of writing, your database, your support answers.
 
-## Why not just use an existing trainer?
+**Fine-tuning** is a short tutoring session. You show the student a few thousand examples of your task, and they get better at exactly that.
 
-Existing trainers are excellent, but they mostly answer "how do I train?" and leave three questions to you:
+The usual problem: tutoring a big model needs a big, expensive GPU. tinyforge uses clever tricks (small add-on layers called **LoRA**, and squeezing the model to 4-bit numbers, called **QLoRA**) so the same tutoring fits on a small card. You do not have to choose the tricks. The tool looks at your machine and chooses for you.
 
-1. **Will it fit on my GPU?** tinyforge probes your VRAM, RAM and disk, then plans: fp16 or 4-bit, gradient checkpointing, micro-batch size. If your GPU is too small, it says so *before* you wait twenty minutes for an out-of-memory crash.
-2. **Did it actually get better?** Every run is judged against the base model on held-out data. A random-weights model, a model with no chat template, or a tuned model that is no better than the base all fail with a specific error code instead of a green tick.
-3. **How do I use it afterwards?** One command exports to GGUF; another serves an OpenAI-compatible API with a secret-leak guardrail.
+The second problem: many tools say "done!" even when the model got no better. tinyforge **tests the student before and after**, and tells you the truth.
 
 ---
 
-## Getting started (Windows and Linux)
+## Part 2. Your first run (about 15 minutes, copy and paste)
 
-The commands are identical on both systems. Only the shell syntax differs.
+### What you need
 
-**Linux / macOS**
+- Python 3.10 or newer.
+- An NVIDIA GPU is best. Without one it still installs, but training will be very slow. A free Google Colab GPU works too.
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cu124   # or /cpu
-pip install "tinyforge[finetune]"
-```
+### Step 1. Make a clean workspace
 
 **Windows (PowerShell)**
 
@@ -53,67 +45,140 @@ pip install torch --index-url https://download.pytorch.org/whl/cu124
 pip install "tinyforge[finetune]"
 ```
 
-Then ask the tool what it thinks of your machine:
+**Linux / macOS**
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cu124   # use /cpu if you have no NVIDIA GPU
+pip install "tinyforge[finetune]"
+```
+
+Why install `torch` yourself first? PyTorch comes in different builds (for different GPUs). Only you know which one your computer needs, so tinyforge leaves that choice to you instead of guessing wrong.
+
+### Step 2. Ask the tool about your computer
 
 ```bash
 tinyforge doctor
 ```
 
-```text
-(abridged)
-os                 Linux 6.6.122+
-gpu_name           Tesla T4
-vram_gb            14.56
-compute_capability (7, 5)
-...
-Optional components
-  finetune      ok
-  llama.cpp     missing   -> download llama.cpp, set TINYFORGE_LLAMA_SERVER ...
-```
+You get a table: your GPU, its memory, which features it supports, and a list of optional parts that are `ok` or `missing`. For every missing part it prints the exact command to fix it. If you see `torch_version: None`, you skipped the torch install in step 1.
 
-`doctor` tells you what is missing and gives the exact command to fix it. No stack traces for a forgotten dependency.
-
-`tinyforge memory` goes one step further: it measures your VRAM, RAM and disk bandwidth and says where a model's weights would live and roughly how fast it would run.
-
----
-
-## Fine-tune a model in two commands
+### Step 3. Teach a model
 
 ```bash
 tinyforge ft pipeline --steps 100
+```
+
+This one command does everything, in order:
+
+1. Checks your hardware.
+2. Downloads a small training dataset, removes duplicates, splits it into "practice" and "exam" parts so the exam is never seen during training, and scans for passwords or personal data.
+3. Plans the memory use so you do not wait twenty minutes for an out-of-memory crash.
+4. Trains (the default model is the small `SmolLM2-360M-Instruct`).
+5. Grades the tuned model against the original on the exam part.
+6. Merges the result into a usable model.
+
+If any check fails, the command exits with an error code and a message that says what went wrong. The tool does not print a cheerful green tick over a bad result.
+
+### Step 4. Talk to your model
+
+```bash
 tinyforge ft generate "Explain hash tables in two sentences"
 ```
 
-The first command runs the whole chain: check hardware, prepare the data (de-duplicated, leak-free train/validation split, PII and secret scan), plan the memory, train a LoRA adapter, evaluate tuned versus base, and merge. It exits non-zero if a gate fails.
+To hear the **original** model for comparison, add `--base`:
 
-On a free Colab T4 one run improved held-out loss from 1.314 to 1.271 (about 3%) with no forgetting on general text. On another run of the same pipeline, with a weaker improvement, it printed this instead of celebrating:
-
-```text
-WARN  FE002: Only 1.8% improvement over base: the data may not teach anything new.
+```bash
+tinyforge ft generate "Explain hash tables in two sentences" --base
 ```
 
-That is the point. A general instruction dataset on an already-tuned small model mostly changes style. The tool says so.
+### Step 5. Open the web page and API
 
-### Where fine-tuning really pays off: a narrow task
+```bash
+tinyforge serve
+```
 
-I tuned models to write SQL for a table they had never seen. Results, measured by *running the generated query* against the database, not by string matching:
+Open http://127.0.0.1:8000 in your browser. The same server speaks the OpenAI chat format, so existing tools and libraries can talk to it.
 
-| Model | Tuned | Best prompted base |
+### If something goes wrong
+
+| What you see | What it means | What to do |
 |---|---|---|
-| Qwen2.5-3B, new table | **98%** execution accuracy | 70% |
-| Llama-3.1-8B, new table (templated questions) | **100%** | 93% |
-| Llama-3.1-8B, harder question shapes | 98% | 97% |
-
-Read the last row carefully. On harder questions the tuned model was barely better than a well-prompted base. Fine-tuning mostly fixed the *output format*. I left that row in the README because a fine-tuning tool that only shows its wins is advertising, not engineering.
+| `torch_version: None` in `doctor` | PyTorch is not installed | Run the `pip install torch ...` line from step 1 |
+| A "missing component" message | An optional part is not installed | Copy the command the message prints |
+| A plan that says the model does not fit | Your GPU is too small for that model | Pick a smaller `--base-model`, or see Part 4 |
+| `WARN FE002: Only 1.8% improvement` | The tuned model is barely better | Not a bug. Your data did not teach much. Use data closer to your real task |
 
 ---
 
-## Training a model bigger than your GPU
+## Part 3. What results to expect (honest numbers)
 
-An 8B model in 4-bit still needs roughly 5 GB for weights alone. On a 4 GB card that cannot work, so tinyforge can hand the job to a layer-streaming backend:
+On a free Colab T4, the default pipeline improved held-out loss from 1.314 to 1.271 (about 3%) with no forgetting of general text. A general chat dataset on an already-tuned small model mostly changes *style*, and the tool will say so when the gain is small.
+
+Fine-tuning pays off on **narrow tasks**. I tuned models to write SQL for a table they had never seen, and scored them by *running the generated query* on the database (not by comparing text):
+
+| Model | Tuned | Best prompted base model |
+|---|---|---|
+| Qwen2.5-3B, new table | **98%** correct | 70% |
+| Llama-3.1-8B, new table (templated questions) | **100%** | 93% |
+| Llama-3.1-8B, harder question shapes | 98% | 97% |
+
+Look at the last row: on harder questions the tuned model was barely better than a well-written prompt. I left it in the README on purpose. These are single runs on small test sets (the raw JSON is in the repo's `benchmarks/` folder), so treat them as evidence, not proof.
+
+Make your own score with a real task check:
+
+```bash
+tinyforge ft task-eval --task sql --n 100 --min-gain-pts 5
+```
+
+It exits non-zero unless the tuned model beats the base by at least 5 points.
+
+---
+
+## Part 4. For professionals: the full toolbox
+
+### 4.1 Pick a method that fits the machine
+
+```bash
+tinyforge memory --params-b 8          # where would an 8B model's weights live (VRAM / RAM / NVMe), rough speed
+tinyforge methods list                  # known fine-tuning methods and what has actually been verified
+tinyforge methods suggest --params-b 8  # which methods fit this GPU and RAM, on which backend, and why
+tinyforge ft plan                       # will the chosen preset fit, and with what settings (4-bit? checkpointing? batch?)
+```
+
+The speed estimates are uncalibrated. Treat tokens-per-second figures as rough.
+
+### 4.2 Train with explicit settings
+
+```bash
+tinyforge ft train \
+  --base-model HuggingFaceTB/SmolLM2-360M-Instruct \
+  --steps 300 --max-len 512 --batch-size 4 --grad-accum 4 \
+  --lr 0.0002 --lora-r 16 --quant auto \
+  --data-dir data/ft --run-dir runs/ft
+tinyforge ft eval        # held-out loss, forgetting check, sample generations, merge check
+tinyforge ft card        # writes a model card (README.md) from the run's own config and results
+```
+
+Training resumes automatically from `runs/ft/last.pt` and saves the best adapter to `runs/ft/best`. Add `--json` to any of these for machine-readable events, and use the exit code in CI: `pipeline` returns 1 if a gate fails.
+
+### 4.3 Bring your own data, safely
+
+```bash
+tinyforge data tabular people.csv --out tab.jsonl --count 500     # CSV -> text-to-SQL pairs, kept only if the SQL executes
+tinyforge data ingest ./docs --out chunks.jsonl                    # documents -> cleaned, chunked, de-duplicated text
+tinyforge data pairs chunks.jsonl --teacher-url http://127.0.0.1:8000/v1 --out data/pairs   # chunks -> grounded Q&A via a "teacher" model server you point it at; split by source file BEFORE generation
+tinyforge data pii-scan tab.jsonl --redact-to clean.jsonl          # exits 1 if it finds a secret
+```
+
+Splitting by source file *before* the question-writer runs prevents the usual leak where the same document appears in both training and exam data.
+
+### 4.4 A reproducible job file
+
+For repeatable runs (and for CI), describe the job in YAML:
 
 ```yaml
-# job.yaml  (this is spec/examples/soup-8b-streaming.yaml in the repo)
+# job.yaml  (see spec/examples/ in the repo)
 apiVersion: tinyforge.dev/v1alpha1
 kind: TrainingJob
 metadata:
@@ -137,24 +202,39 @@ spec:
 tinyforge worker run --spec job.yaml --out jobs/sql-8b
 ```
 
-A 200-step run of this kind trained Llama-3.1-8B in about 9.5 minutes on the 4 GB laptop (it needs about 4 GB of free system RAM and Soup installed in its own environment; `tinyforge memory --params-b 8` shows the plan for your machine). (Caveat: this backend is beta upstream and I have only verified it on Windows.)
+This is how a model **bigger than your GPU** is trained: an 8B model needs about 5 GB for 4-bit weights alone, so the optional layer-streaming backend (Soup, installed in its own environment) passes layers through the GPU one at a time. A 200-step run trained Llama-3.1-8B in about 9.5 minutes on the 4 GB laptop. It needs roughly 4 GB of free system RAM. Caveat: that backend is beta upstream and I verified it only on Windows.
 
-Data for that run came from the built-in table tool, which only keeps training examples whose SQL actually executes:
-
-```bash
-tinyforge data tabular people.csv --out tab.jsonl --count 500
-tinyforge data pii-scan tab.jsonl --redact-to clean.jsonl   # exits 1 if it finds a secret
-```
-
----
-
-## Serving and exporting
+### 4.5 More than one GPU
 
 ```bash
-tinyforge serve                      # web UI + API on http://127.0.0.1:8000
+tinyforge ft train --steps 60 --gpus 2
 ```
 
-The API is OpenAI-compatible, so existing client libraries work:
+Or `resources: {gpus: 2}` in a job file. This is data-parallel LoRA: each GPU trains on its own full batch and the small adapter gradients are averaged every step (`--split-batch` splits one batch across GPUs instead). At the end the tool compares the weights on every GPU and reports `ddp_max_param_divergence`. On a Kaggle 2×T4 it was exactly `0.0`, and resuming from a checkpoint stayed in lockstep.
+
+**Honest speedup:** across four runs, two T4s gave **1.2× to 1.4×** the throughput of one, not 2×. Waiting between GPUs is measured and low, so the cause is something else (probably the shared host with four virtual CPUs). I will not claim near-linear scaling until a controlled test says so. It does not shard one big model across GPUs, and there is no multi-node training.
+
+### 4.6 Check against standard benchmarks
+
+```bash
+tinyforge bench list      # what each benchmark measures and how it runs
+tinyforge bench suggest   # sizes and picks benchmarks for your GPU, RAM and time budget
+tinyforge bench run       # lm-evaluation-harness, or the built-in SQL execution check
+```
+
+Note: the built-in SQL check is the one I have run for real. I have **not** yet run the lm-evaluation-harness path end to end.
+
+### 4.7 Export and serve
+
+```bash
+tinyforge export gguf --base ./SmolLM2-360M-Instruct --adapter runs/ft/best --quant q8_0
+tinyforge serve --engine llamacpp \
+  --gguf out/gguf/base-q8_0.gguf --lora-gguf out/gguf/adapter-f16.gguf
+```
+
+`q8_0` is the safe default. In my test `q4_k_m` lost about 5 points of exact match. Export needs the llama.cpp tools (`doctor` tells you how to get them).
+
+Calling the OpenAI-compatible endpoint:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions \
@@ -163,81 +243,65 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Say hi"}],"max_tokens":16}'
 ```
 
-If a prompt contains something that looks like a credential, the server refuses it:
+Safety defaults worth knowing:
 
-```json
-{"error":{"message":"The prompt contains a credential-like string; remove it and retry.",
-          "type":"invalid_request_error","code":"secret_in_prompt"}}
-```
-
-For fast local inference, export to GGUF and serve through llama.cpp:
-
-```bash
-tinyforge export gguf --base ./SmolLM2-360M-Instruct --adapter runs/ft/best --quant q8_0
-tinyforge serve --engine llamacpp --gguf out/gguf/base-q8_0.gguf --lora-gguf out/gguf/adapter-f16.gguf
-```
-
-Quantization is a real trade-off. On my tests `q8_0` is the safe default; `q4_k_m` lost about 5 points of exact match.
+- Binding to anything other than localhost needs TLS (or an explicit `--insecure-http`) **and** `TINYFORGE_API_TOKEN` set. mTLS is available with `--ssl-ca-certs` and `--client-cert-required`.
+- If a prompt contains something that looks like a credential, the server refuses it with `secret_in_prompt` instead of sending it to the model.
+- A model with random weights, or one with no chat template, is rejected with a specific diagnostic code rather than quietly served.
 
 ---
 
-## Multi-GPU (new in 0.1.1)
+## Part 5. The part most projects skip: what broke when I tested on other machines
 
-If you have two or more GPUs on one machine, add one flag:
+I built everything on one Windows laptop, and "works on my machine" proves almost nothing. So I ran the **published package** on a free Colab T4 (Linux) and a Kaggle 2×T4 box. These are the bugs that surfaced, all fixed in 0.1.1:
 
-```bash
-tinyforge ft train --steps 60 --gpus 2
-```
+1. **The README quickstart failed.** `pipeline` saved to one folder and `generate` looked in another. Now it finds the newest checkpoint and explains what to do if there is none.
+2. **Colab's preinstalled `torchao` crashed fine-tuning.** `peft` refuses versions older than 0.16 and Colab ships 0.10. tinyforge now hides a too-old `torchao` from its own process (opt out with `TINYFORGE_KEEP_TORCHAO=1`).
+3. **A broken TensorFlow crashed every command.** Colab ships TensorFlow, and installing the llama.cpp converter downgrades `protobuf` under it. tinyforge is PyTorch-only, so it now turns TensorFlow, Flax and JAX off for `transformers`.
+4. **The T4 ran about 2.7× slower than it should.** PyTorch says a T4 supports bf16, but only by emulating it. tinyforge now checks for real support (compute capability 8 or higher) and uses fp16 otherwise: about 1,100 to 2,960 tokens/s, and peak memory from 9.6 GB to 2.4 GB.
+5. **That fix created a new bug.** In fp16, held-out loss sometimes came out `NaN`. Evaluation now recomputes an overflowing batch in bf16 and tells you (diagnostic `FT007`).
+6. **My first multi-GPU design under-used the cards.** I split one fixed batch across GPUs, so each got half. The default is now a full batch per GPU.
+7. **My own test notebook lied.** It showed a failing test suite as passing because a `| tail` hid the exit code.
 
-Each GPU trains on its own full batch, and the small LoRA gradients are averaged every step. The same works from a job spec with `resources: {gpus: 2}`. When training finishes, tinyforge compares the weights on every GPU and reports `ddp_max_param_divergence`. On a Kaggle 2×T4 machine it was exactly `0.0`: both GPUs held identical weights. NCCL all-reduce measured 7.3 GB/s between the cards, and resuming from a checkpoint kept them in lockstep.
-
-The speedup is the part I have to be straight about: across four runs, two T4s gave **1.2× to 1.4×** the throughput of one, not 2×. I first suspected one GPU waiting on the other, measured it, balanced the work between them, and the waiting dropped from 0.35 s to 0.02 s per step, but the speedup did not move. So the cause is something else, most likely the shared host (four virtual CPUs). I have added a side-by-side test to settle it, and I will not claim near-linear scaling until it does.
-
-Honest status: this is data-parallel only. It does not shard a model across GPUs (so a model too big for one card still needs the layer-streaming backend), and there is no multi-node training yet.
-
----
-
-## The part that matters: testing on machines that aren't mine
-
-I developed everything on one Windows laptop. That is a trap: it works on my machine proves almost nothing. So I wrote a test notebook and ran the *published package* on a free Colab T4 (Linux) and a Kaggle 2×T4 box. Here is what broke:
-
-**1. The README quickstart failed.** `tinyforge pipeline` saved its checkpoint in `runs/micro/`, but `tinyforge generate` looked in `runs/default/`. Fixed: it now finds the newest checkpoint and says what to do when there is none.
-
-**2. Colab's preinstalled `torchao` crashed fine-tuning.** `peft` refuses `torchao` older than 0.16, and Colab and Kaggle ship 0.10. tinyforge never uses it, so it now hides a too-old `torchao` from its own process. Users no longer need a workaround.
-
-**3. A broken TensorFlow crashed every command.** Installing the llama.cpp converter downgrades `protobuf`, which breaks the TensorFlow that Colab preinstalls, and `transformers` imports TensorFlow if it can. tinyforge is PyTorch-only, so it now switches TensorFlow, Flax and JAX off for `transformers`.
-
-**4. The T4 was running 2.7× slower than it should.** PyTorch reports `bf16_supported = True` on a T4, but only by *emulating* bf16. tinyforge believed it and trained in emulated bf16. Detecting real support (compute capability 8 or higher) and falling back to fp16 took single-GPU throughput from about 1,100 to about 2,960 tokens/s, and peak memory from 9.6 GB to 2.4 GB.
-
-**5. That fix created a new bug.** In fp16, held-out loss occasionally came out as `NaN` while training stayed finite: a model trained in bf16 can overflow in fp16 on some inputs. Evaluation now recomputes an overflowing batch in bf16 and tells you it did (diagnostic `FT007`).
-
-**6. My own multi-GPU design was slower than it should be.** The first Kaggle run gave only a 1.25× speedup on two GPUs. I had split one fixed batch across the GPUs, so each GPU got half a batch and sat under-utilised. The default is now standard data-parallel (each GPU gets a full batch), with `--split-batch` for the old behaviour.
-
-**7. My own test notebook lied.** It reported a failing test suite as passing because a `| tail` hid the exit code. That is a good reminder that a green checkmark is only as honest as the thing producing it.
-
-None of these showed up on my laptop. All of them would have hit a real user in the first five minutes.
+None of these appeared on my laptop. All would have hit a real user in the first five minutes. Version 0.1.2 only corrected the README (it wrongly claimed multi-GPU was untested).
 
 ---
 
-## What tinyforge does *not* do (yet)
+## Part 6. What it does not do (yet)
 
-- **No sharded training.** A model too big for one GPU across several GPUs (FSDP) is not built.
-- **No multi-node training**, and Kubernetes with GPUs is untested. The Helm chart and job-spec controller pieces were verified on a CPU-only `kind` cluster only.
+- **No sharded training** of one model across several GPUs (FSDP), and **no multi-node training**.
+- **Kubernetes with GPUs is untested.** The Helm chart and job-spec pieces were verified only on a CPU-only `kind` cluster.
 - **DPO / preference tuning** is listed but has never been run.
-- **Gains depend on the task.** Big wins on narrow, templated tasks; modest on general chat tuning; about nothing on harder question shapes I tried.
-- **The speed estimator is uncalibrated.** Treat its tokens-per-second numbers as rough.
-- **Windows multi-GPU** is development-only (Windows has no NCCL).
+- **NVIDIA only.** No AMD or Apple GPU support.
+- **Gains depend on the task:** big on narrow, templated tasks, modest on general chat, close to nothing on the harder question shapes I tried.
+- **Speed estimates are rough**, and Windows multi-GPU is development-only (no NCCL on Windows).
 
 ---
+
+## Cheat sheet
+
+| I want to... | Command |
+|---|---|
+| See if my computer is ready | `tinyforge doctor` |
+| See if a model fits my GPU | `tinyforge ft plan` / `tinyforge memory --params-b 8` |
+| Train and check, all in one | `tinyforge ft pipeline --steps 100` |
+| Chat with my model | `tinyforge ft generate "..."` (add `--base` for the original) |
+| Prove it beat the base model | `tinyforge ft task-eval --task sql --min-gain-pts 5` |
+| Clean my data of secrets | `tinyforge data pii-scan in.jsonl --redact-to out.jsonl` |
+| Use two GPUs | `tinyforge ft train --gpus 2` |
+| Run from a job file | `tinyforge worker run --spec job.yaml --out jobs/x` |
+| Export for llama.cpp | `tinyforge export gguf --base ... --adapter ... --quant q8_0` |
+| Start the web page and API | `tinyforge serve` |
 
 ## Try it
 
 ```bash
-pip install tinyforge
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+pip install "tinyforge[finetune]"
 tinyforge doctor
 tinyforge ft pipeline --steps 100
 ```
 
-There are ready-made test notebooks for Google Colab and Kaggle in the repo (`notebooks/`), and a step-by-step Linux/Windows install guide in `docs/install.md`. If something breaks on your hardware, that is exactly the information I want: open an issue at https://github.com/rajratangm/tinyforge.
+There are ready-made test notebooks for Google Colab and Kaggle in `notebooks/`, and a step-by-step install guide in `docs/install.md`. If it breaks on your hardware, that is exactly what I want to know: https://github.com/rajratangm/tinyforge/issues
 
-*tinyforge is Apache-2.0 licensed. It is early alpha (0.1.x). The numbers above are single runs on small test sets, and the raw JSON for each is committed in the repo's `benchmarks/` folder.*
+*tinyforge is Apache-2.0 licensed and early alpha (0.1.x). The numbers above come from single runs on small test sets; the raw JSON for each is committed in `benchmarks/`.*
