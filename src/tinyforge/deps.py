@@ -120,3 +120,44 @@ def explain_incompatible(exc: ImportError) -> str | None:
         f"The installed '{pkg}' is not compatible: {detail}\n"
         f"  Fix: pip install -U {pkg}      (or, if you do not use it: pip uninstall -y {pkg})"
     )
+
+
+TORCHAO_MIN = (0, 16, 0)
+
+
+def _torchao_version() -> str | None:
+    import importlib.metadata as md
+
+    if importlib.util.find_spec("torchao") is None:
+        return None
+    try:
+        return md.version("torchao")
+    except md.PackageNotFoundError:
+        return None
+
+
+def shield_old_torchao() -> bool:
+    """Hide a too-old `torchao` from this process so peft does not refuse to start.
+
+    Colab and Kaggle preinstall torchao 0.10; peft raises on anything below 0.16 even though tinyforge never
+    uses torchao. Setting sys.modules['torchao'] = None makes `find_spec` report it as absent, which is what
+    peft checks. Only this process is affected, and only when the installed version is too old. Opt out with
+    TINYFORGE_KEEP_TORCHAO=1. Returns True when it hid the package.
+    """
+    import sys
+
+    if os.environ.get("TINYFORGE_KEEP_TORCHAO") == "1":
+        return False
+    if "torchao" in sys.modules:  # already shielded, or already imported (too late to hide it safely)
+        return False
+    ver = _torchao_version()
+    if ver is None:
+        return False
+    try:
+        parts = tuple(int(p) for p in ver.split(".")[:3])
+    except ValueError:
+        return False
+    if parts >= TORCHAO_MIN:
+        return False
+    sys.modules["torchao"] = None  # type: ignore[assignment]
+    return True

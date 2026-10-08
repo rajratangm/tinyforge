@@ -842,6 +842,7 @@ def main() -> None:
     from . import deps
     from .errors import UserError
 
+    deps.shield_old_torchao()
     try:
         app()
     except UserError as e:

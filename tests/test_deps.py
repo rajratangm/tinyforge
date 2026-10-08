@@ -103,3 +103,29 @@ def test_importing_tinyforge_turns_off_tensorflow_and_flax_in_transformers():
         [sys.executable, "-c", code],
         capture_output=True, text=True, env=env, check=True).stdout.split()
     assert out == ["0", "0", "0"]
+
+
+def test_old_torchao_is_hidden_from_this_process_and_new_is_left_alone(monkeypatch):
+    import importlib.util
+    import sys
+
+    monkeypatch.delenv("TINYFORGE_KEEP_TORCHAO", raising=False)
+    monkeypatch.delitem(sys.modules, "torchao", raising=False)
+    monkeypatch.setattr(deps, "_torchao_version", lambda: "0.10.0")
+    assert deps.shield_old_torchao() is True
+    assert importlib.util.find_spec("torchao") is None  # what peft checks before it raises
+    assert deps.shield_old_torchao() is False  # idempotent
+    monkeypatch.delitem(sys.modules, "torchao")
+    monkeypatch.setattr(deps, "_torchao_version", lambda: "0.16.1")
+    assert deps.shield_old_torchao() is False and "torchao" not in sys.modules
+    monkeypatch.setattr(deps, "_torchao_version", lambda: None)
+    assert deps.shield_old_torchao() is False
+
+
+def test_torchao_shield_can_be_switched_off(monkeypatch):
+    import sys
+
+    monkeypatch.delitem(sys.modules, "torchao", raising=False)
+    monkeypatch.setenv("TINYFORGE_KEEP_TORCHAO", "1")
+    monkeypatch.setattr(deps, "_torchao_version", lambda: "0.10.0")
+    assert deps.shield_old_torchao() is False and "torchao" not in sys.modules

@@ -17,10 +17,12 @@ from pathlib import Path
 import torch
 from pydantic import BaseModel
 
-from . import hardware
+from . import deps, hardware
 from .errors import UserError
 from .memory import causal_lm_loss
 from .warnings import Level, Report
+
+deps.shield_old_torchao()  # peft refuses torchao < 0.16 (Colab/Kaggle ship 0.10); we never use it
 
 DEFAULT_BASE = "HuggingFaceTB/SmolLM2-360M-Instruct"
 

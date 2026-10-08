@@ -52,8 +52,8 @@ tinyforge --version
 tinyforge doctor        # hardware, what is installed, and the exact command for anything missing
 ```
 
-On Google Colab, torch is preinstalled: skip the torch line. Colab ships a `torchao` that `peft` rejects; if you
-see "incompatible version of torchao", run `pip uninstall -y torchao`.
+On Google Colab and Kaggle, torch is preinstalled: skip the torch line. (Their preinstalled `torchao` is too old for
+`peft`; tinyforge hides it from its own process automatically. Set `TINYFORGE_KEEP_TORCHAO=1` to turn that off.)
 
 ## 3. First run
 
@@ -159,7 +159,7 @@ Exit codes are listed in `spec/worker-contract.md` (for example 75 means "retry 
 | Symptom | Fix |
 |---|---|
 | `tinyforge: This command needs 'torch'...` | install torch with the line in section 2, then re-run `tinyforge doctor` |
-| `incompatible version of torchao` | `pip uninstall -y torchao` (or `pip install -U torchao`) |
+| `incompatible version of torchao` (older tinyforge) | upgrade tinyforge, or `pip uninstall -y torchao` |
 | `No checkpoint at runs/default/best.pt` | train first (`tinyforge pipeline`), or pass `--ckpt runs/<preset>/best.pt` |
 | `cuda_available False` but you have a GPU | `nvidia-smi` must work; install the CUDA build of torch (`cu124` index, not `cpu`) |
 | Out of GPU memory | `tinyforge plan` / `tinyforge ft plan` say what fits; lower `--max-len`, use 4-bit, or see `tinyforge memory` |
