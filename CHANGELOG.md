@@ -7,8 +7,9 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 ### Added
 - Multi-GPU: data-parallel LoRA fine-tuning on one machine (`tinyforge ft train --gpus N`, or `resources.gpus: N`
   in a job spec). Each GPU trains on its own full batch (effective batch N x; `--split-batch` splits one batch instead) and the LoRA gradients are averaged each step; the run
-  proves the replicas stayed identical. Tested with real 2-process runs (CPU, gloo) on Windows and Linux; the
-  Kaggle 2x T4 notebook (`notebooks/kaggle_multi_gpu.ipynb`) measures real NCCL runs.
+  proves the replicas stayed identical. Tested with real 2-process runs (CPU, gloo) on Windows and Linux and on a
+  Kaggle 2x T4 machine (`notebooks/kaggle_multi_gpu.ipynb`): NCCL works, replicas stay identical, resume works.
+  Measured throughput is 1.2x-1.4x of one GPU on a small 360M job (not 2x); cause not yet established.
 - `docs/install.md`: Linux, Windows and Colab/Kaggle instructions side by side, with what is tested where.
 - Colab and Kaggle test notebooks (`notebooks/`).
 - PyPI classifiers for Linux and Python 3.13.

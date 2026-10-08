@@ -138,7 +138,8 @@ memory stays flat, because llama.cpp reserves the cache up front.*
   llama.cpp/vLLM for serving.
 - Single-job (a SQLite job queue exists). **Multi-GPU:** data-parallel LoRA on one machine (`tinyforge ft train --gpus N`,
   or `resources.gpus: N` in a job spec) is implemented and tested with real 2-process training on CPU (gloo) on Windows and
-  Linux; it has **not yet been run on real GPUs with NCCL** (`notebooks/kaggle_multi_gpu.ipynb` does that on Kaggle's
-  2x T4). Not built: FSDP/sharded training (models too big for one GPU), multi-node, pipeline parallelism.
+  Linux, and on real GPUs with NCCL (Kaggle 2x T4, `notebooks/kaggle_multi_gpu.ipynb`): both GPUs stay identical and
+  resume works, but throughput is only about **1.2x-1.4x** of one GPU for a small 360M LoRA job, well short of 2x
+  (cause being investigated). Not built: FSDP/sharded training (models too big for one GPU), multi-node, pipeline parallelism.
 - The API requires `TINYFORGE_API_TOKEN` (bearer) and the server binds to localhost by default; the static UI page
   itself is not authenticated. Put it behind TLS, SSM/VPN or a reverse proxy before exposing it.

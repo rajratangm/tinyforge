@@ -10,7 +10,8 @@ The commands are the same everywhere; only the shell syntax differs. Each step s
 | **Linux + NVIDIA GPU** (Google Colab, Ubuntu, Tesla T4 16 GB, Python 3.13) | Ran end to end from the published package: install, `doctor`, `memory`, data tools, from-scratch pipeline, LoRA fine-tune, job-spec worker, server (OpenAI API, secret guardrail, metrics), GGUF export and llama.cpp serving. See `notebooks/colab_smoke_test.ipynb`. |
 | **Linux, CPU only** (Docker and GitHub Actions, Python 3.10 and 3.12) | Full test suite passes in CI. |
 | **Windows 11 + NVIDIA GPU** (RTX 3050 Ti 4 GB, Python 3.12) | The main development machine; everything in the README "Verified results" was run here. |
-| Multi-GPU, multi-node, Kubernetes with GPUs, AMD (ROCm), Apple silicon | **Not tested.** The Kubernetes chart and operator pieces were verified on a CPU-only `kind` cluster only. |
+| **Linux, 2 NVIDIA GPUs** (Kaggle 2x T4) | Data-parallel LoRA verified: NCCL works, replicas identical, resume works; throughput only 1.2x-1.4x of one GPU on a small job. |
+| Multi-node, Kubernetes with GPUs, AMD (ROCm), Apple silicon | **Not tested.** The Kubernetes chart and operator pieces were verified on a CPU-only `kind` cluster only. |
 
 ## 1. Prerequisites
 
@@ -141,8 +142,9 @@ Exit codes are listed in `spec/worker-contract.md` (for example 75 means "retry 
   tinyforge trains them in fp16 with loss scaling. Ampere and newer use bf16.
 - **Multi-GPU.** `tinyforge ft train --gpus 2` (or `resources: {gpus: 2}` in a job spec) trains LoRA data-parallel on
   one machine: each GPU trains on its own full batch (so the effective batch is N times larger; `--split-batch` splits one batch instead) and the small LoRA gradients are averaged each step. It
-  needs Linux (NCCL does not exist on Windows). Tested with real 2-process runs on CPU; real-GPU NCCL runs are what
-  `notebooks/kaggle_multi_gpu.ipynb` (Kaggle, 2x T4) measures. Not available: sharding one model across GPUs (FSDP),
+  needs Linux (NCCL does not exist on Windows). Tested with real 2-process runs on CPU and on a Kaggle 2x T4 machine
+  (`notebooks/kaggle_multi_gpu.ipynb`): the GPUs stay identical and resume works, but throughput was only 1.2x-1.4x of
+  one GPU on a small 360M job, not 2x. Larger models, where compute dominates, should scale better; that is untested. Not available: sharding one model across GPUs (FSDP),
   multi-node, and the `soup` backend with more than one GPU.
 - **Triton, JAX, vLLM, DeepSpeed.** Linux first. Windows needs `triton-windows`; JAX has no native Windows GPU support.
 - **WSL2.** Works as Linux: install the NVIDIA Windows driver (not a Linux driver inside WSL), then follow the Linux
