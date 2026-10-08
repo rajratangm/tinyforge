@@ -2,7 +2,7 @@
 
 import os
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # tinyforge is PyTorch-only. transformers imports TensorFlow/Flax whenever they are installed, and a broken or
 # mismatched one (Colab ships TensorFlow; llama.cpp's requirements downgrade protobuf under it) makes every

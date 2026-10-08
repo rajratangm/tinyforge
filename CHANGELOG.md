@@ -3,6 +3,28 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-08
+### Added
+- Multi-GPU: data-parallel LoRA fine-tuning on one machine (`tinyforge ft train --gpus N`, or `resources.gpus: N`
+  in a job spec). Each GPU takes its share of every batch and the LoRA gradients are averaged each step; the run
+  proves the replicas stayed identical. Tested with real 2-process runs (CPU, gloo) on Windows and Linux; the
+  Kaggle 2x T4 notebook (`notebooks/kaggle_multi_gpu.ipynb`) measures real NCCL runs.
+- `docs/install.md`: Linux, Windows and Colab/Kaggle instructions side by side, with what is tested where.
+- Colab and Kaggle test notebooks (`notebooks/`).
+- PyPI classifiers for Linux and Python 3.13.
+
+### Fixed (found by running the published 0.1.0 on a Linux Colab T4 and a Kaggle 2x T4)
+- `tinyforge generate` / `eval` looked in `runs/default` while `pipeline` wrote `runs/<preset>`; they now find the
+  newest checkpoint and say what to do when there is none.
+- Colab/Kaggle's preinstalled `torchao` (0.10) made `peft` refuse to start; tinyforge now hides a too-old torchao
+  from its own process (opt out: `TINYFORGE_KEEP_TORCHAO=1`) and explains other version clashes in plain words.
+- A broken TensorFlow (Colab ships one; llama.cpp's requirements downgrade `protobuf` under it) crashed every
+  command on import: tinyforge now turns off TensorFlow/Flax/JAX in `transformers` (it is PyTorch-only).
+- GPUs without native bf16 (compute capability below 8, e.g. T4) were treated as bf16-capable and trained on slow
+  emulation; they now use fp16 with loss scaling.
+- `bench run --hf-model` passed `load_in_4bit` to newer transformers, which rejects it; it now loads fp16 and
+  `--four-bit` is opt-in.
+
 ## [0.1.0] - 2026-10-08
 ### Added
 - Optional Soup training backend (`spec.backend: soup`): layer streaming trains models larger than VRAM (8B on
