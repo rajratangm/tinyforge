@@ -107,3 +107,16 @@ def explain_missing(exc: ModuleNotFoundError) -> str | None:
         f"  Fix: {c.install}\n"
         "  Run `tinyforge doctor` to see everything that is installed or missing."
     )
+
+
+def explain_incompatible(exc: ImportError) -> str | None:
+    """A plain-language fix when an installed package is incompatible with peft (Colab ships torchao 0.10)."""
+    text = str(exc).strip()
+    if "incompatible version of" not in text:
+        return None
+    pkg = text.split("incompatible version of", 1)[1].split(".", 1)[0].strip()
+    detail = " ".join(text.split())
+    return (
+        f"The installed '{pkg}' is not compatible: {detail}\n"
+        f"  Fix: pip install -U {pkg}      (or, if you do not use it: pip uninstall -y {pkg})"
+    )

@@ -49,3 +49,27 @@ def test_components_report_has_every_component_with_an_install_command():
 def test_doctor_json_includes_components():
     out = json.loads(CliRunner().invoke(cli.app, ["doctor", "--json"]).stdout)
     assert out["components"] and {"name", "installed", "install"} <= out["components"][0].keys()
+
+
+def test_incompatible_torchao_gets_a_fix_not_a_traceback(monkeypatch, capsys):
+    def boom():
+        raise ImportError(
+            "Found an incompatible version of torchao. Found version 0.10.0, "
+            "but only versions above 0.16.0 are supported"
+        )
+
+    monkeypatch.setattr(cli, "app", boom)
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "pip install -U torchao" in err and "pip uninstall -y torchao" in err
+
+
+def test_unrelated_import_errors_still_raise(monkeypatch):
+    def boom():
+        raise ImportError("cannot import name 'x'")
+
+    monkeypatch.setattr(cli, "app", boom)
+    with pytest.raises(ImportError):
+        cli.main()

@@ -823,6 +823,12 @@ def main() -> None:
             raise
         print(f"tinyforge: {msg}", file=sys.stderr)
         sys.exit(2)
+    except ImportError as e:
+        msg = deps.explain_incompatible(e)
+        if msg is None:
+            raise
+        print(f"tinyforge: {msg}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
