@@ -305,14 +305,36 @@ def train(
         raise typer.Exit(1) from exc
 
 
+def latest_ckpt(runs: Path = Path("runs")) -> Path:
+    """The checkpoint to use when --ckpt is not given: runs/default/best.pt if present, else the newest
+    runs/*/best.pt (the `pipeline` command writes to runs/<preset>), else runs/default/best.pt."""
+    default = runs / "default" / "best.pt"
+    if default.exists():
+        return default
+    found = sorted(runs.glob("*/best.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return found[0] if found else default
+
+
+def _require_ckpt(ckpt: Path) -> Path:
+    from .errors import UserError
+
+    if not ckpt.exists():
+        raise UserError(
+            f"No checkpoint at {ckpt}. Train one first (`tinyforge pipeline` or `tinyforge train`) "
+            "or pass --ckpt."
+        )
+    return ckpt
+
+
 @app.command("eval")
 def eval_(
-    ckpt: Path = Path("runs/default/best.pt"), data_dir: Path = Path("data/tinyshakespeare"),
+    ckpt: Path | None = None, data_dir: Path = Path("data/tinyshakespeare"),
     out: Path | None = None, as_json: JsonOpt = False,
 ) -> None:
     """Run the evaluation suite (perplexity, quality, memorisation, correctness, speed)."""
     from .evaluate import evaluate
 
+    ckpt = _require_ckpt(ckpt or latest_ckpt())
     res = evaluate(ckpt, data_dir, out or ckpt.parent / "eval.json")
     if as_json:
         print(json.dumps(res))
@@ -327,7 +349,7 @@ def eval_(
 
 @app.command()
 def generate(
-    prompt: Annotated[str, typer.Argument()] = "ROMEO:", ckpt: Path = Path("runs/default/best.pt"),
+    prompt: Annotated[str, typer.Argument()] = "ROMEO:", ckpt: Path | None = None,
     data_dir: Path = Path("data/tinyshakespeare"), max_new: int = 200, temperature: float = 0.8,
     top_k: int = 50, top_p: float = 0.95, int8: bool = False, triton: bool = False,
     seed: int | None = None,
@@ -337,6 +359,7 @@ def generate(
     from .data import load_tokenizer
     from .train import load_model
 
+    ckpt = _require_ckpt(ckpt or latest_ckpt())
     model, _ = load_model(ckpt, hardware.probe().device)
     if int8:
         infer.quantize_int8(model)

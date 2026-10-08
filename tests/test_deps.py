@@ -73,3 +73,20 @@ def test_unrelated_import_errors_still_raise(monkeypatch):
     monkeypatch.setattr(cli, "app", boom)
     with pytest.raises(ImportError):
         cli.main()
+
+
+def test_latest_ckpt_prefers_default_then_newest_run(tmp_path):
+    runs = tmp_path / "runs"
+    assert cli.latest_ckpt(runs) == runs / "default" / "best.pt"  # nothing yet
+    (runs / "micro").mkdir(parents=True)
+    (runs / "micro" / "best.pt").write_bytes(b"x")
+    assert cli.latest_ckpt(runs) == runs / "micro" / "best.pt"  # pipeline output is found
+    (runs / "default").mkdir()
+    (runs / "default" / "best.pt").write_bytes(b"x")
+    assert cli.latest_ckpt(runs) == runs / "default" / "best.pt"
+
+
+def test_generate_without_a_checkpoint_says_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(cli.app, ["generate", "hi"])
+    assert r.exit_code != 0
