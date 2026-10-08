@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 from typer.testing import CliRunner
@@ -90,3 +91,15 @@ def test_generate_without_a_checkpoint_says_what_to_do(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     r = CliRunner().invoke(cli.app, ["generate", "hi"])
     assert r.exit_code != 0
+
+
+def test_importing_tinyforge_turns_off_tensorflow_and_flax_in_transformers():
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k not in ("USE_TF", "USE_FLAX", "USE_JAX")}
+    code = "import tinyforge, os; print(*(os.environ[k] for k in ('USE_TF', 'USE_FLAX', 'USE_JAX')))"
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, env=env, check=True).stdout.split()
+    assert out == ["0", "0", "0"]
