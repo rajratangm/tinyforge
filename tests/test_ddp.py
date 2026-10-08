@@ -95,8 +95,8 @@ def test_two_process_training_keeps_replicas_identical_and_learns(tiny, monkeypa
 
 def test_two_process_loss_tracks_single_process(tiny):
     a, b = _evals(tiny / "single")[-1], _evals(tiny / "ddp")[-1]
-    # Same hyperparameters and global batch, different sampling order: final held-out loss is close.
-    assert abs(a - b) / a < 0.25
+    # --split-batch draws the very same global step as one process and splits it, so the run reproduces it.
+    assert abs(a - b) / a < 0.02
 
 
 def test_launch_reports_a_failing_worker(tiny, monkeypatch):

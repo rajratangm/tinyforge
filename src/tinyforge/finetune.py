@@ -313,8 +313,29 @@ def dist_setup() -> tuple[int, int]:
     return rank, world
 
 
-def _allreduce_mean_grads(params: list, world: int) -> None:
-    """Average .grad across ranks in one flat all-reduce per dtype (LoRA grads are small)."""
+def _share(batches: list[list[int]], ds, rank: int, world: int) -> list[list[int]]:
+    """This rank's balanced share of one optimizer step's micro-batches.
+
+    Every rank draws the same step (same shuffle) and runs the same greedy split, longest batch first onto the
+    least-loaded rank, so the ranks agree without talking and finish at about the same time."""
+    if world == 1:
+        return batches
+
+    def cost(idx: list[int]) -> int:  # padded tokens
+        return len(idx) * max(len(ds.items[i][0]) for i in idx)
+
+    loads, mine = [0] * world, []
+    for idx in sorted(batches, key=cost, reverse=True):
+        r = min(range(world), key=lambda k: (loads[k], k))
+        loads[r] += cost(idx)
+        if r == rank:
+            mine.append(idx)
+    return mine
+
+
+def _allreduce_sum_grads(params: list) -> None:
+    """Sum .grad across ranks in one flat all-reduce per dtype (LoRA grads are small). Each rank's loss is
+    already weighted by its share of the step's examples, so the sum is the gradient of the global mean."""
     import torch.distributed as dist
 
     for p in params:
@@ -326,7 +347,6 @@ def _allreduce_mean_grads(params: list, world: int) -> None:
     for ps in by_dtype.values():
         flat = torch._utils._flatten_dense_tensors([p.grad for p in ps])
         dist.all_reduce(flat)
-        flat /= world
         for p, g in zip(ps, torch._utils._unflatten_dense_tensors(flat, [p.grad for p in ps]), strict=True):
             p.grad.copy_(g)
 
@@ -443,7 +463,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
           train_examples=len(tr), val_examples=len(va), config=c.model_dump(mode="json"))
 
     eps_global = c.examples_per_step or c.batch_size * c.grad_accum
-    eps = max(1, eps_global // world) if c.split_batch else eps_global  # examples per GPU per optimizer step
+    # examples per optimizer step across all GPUs: a full batch per GPU, or one batch split between them
+    eps = eps_global if (world == 1 or c.split_batch) else eps_global * world
     budget_tokens = c.token_budget or c.batch_size * c.max_len
     ce = c.ce_chunk if c.chunked_ce else 0
     eval_bs = min(c.batch_size, 4)
@@ -467,7 +488,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
     order: list[list[int]] = []
-    rng = random.Random(c.seed + step + 7919 * rank)  # each rank shuffles independently
+    rng = random.Random(c.seed + step)  # identical on every rank: they split each step between them (_share)
     t0, tok_count, bad, regress, spill_warned, oom_count = time.time(), 0, 0, 0, False, 0
     sync_t, win_start = 0.0, step  # seconds spent in cross-GPU collectives (waiting for the slowest GPU)
     while step < c.max_steps:
@@ -476,17 +497,20 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
         loss_acc, got = 0.0, 0
         oom = False
         try:
+            step_batches, got = [], 0
             while got < eps:  # micro-batches by token budget until the step has `eps` examples
                 if not order:
                     order = tr.batches(budget_tokens, rng)
                 idx = order.pop()[:eps - got]
+                step_batches.append(idx)
+                got += len(idx)
+            for idx in _share(step_batches, tr, rank, world):
                 b = tr.collate(idx, device)
                 w = len(idx) / eps
                 with torch.autocast(device, dtype=amp, enabled=amp is not None):
                     loss = causal_lm_loss(model, b, c.ce_chunk) if c.chunked_ce else model(**b).loss
                 scaler.scale(loss * w).backward()
                 loss_acc += loss.item() * w
-                got += len(idx)
                 tok_count += int(b["attention_mask"].sum().item())
         except (torch.OutOfMemoryError, RuntimeError) as exc:
             if not _is_mem_error(exc):
@@ -517,8 +541,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
             continue
         if world > 1:
             t_sync = time.time()
-            _allreduce_mean_grads(trainable, world)
-            loss_acc = _dist_sum(loss_acc, device) / world
+            _allreduce_sum_grads(trainable)
+            loss_acc = _dist_sum(loss_acc, device)
             sync_t += time.time() - t_sync
         scaler.unscale_(opt)
         gnorm = torch.nn.utils.clip_grad_norm_(trainable, c.grad_clip).item()
@@ -589,7 +613,7 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                "trainable_params": n_train,
                "peak_mem_gb": torch.cuda.max_memory_allocated() / 1024**3 if device == "cuda" else 0.0}
     summary["world_size"] = world
-    summary["examples_per_step_global"] = eps * world
+    summary["examples_per_step_global"] = eps
     if div is not None:
         summary["ddp_max_param_divergence"] = div
     event("finished", **summary)

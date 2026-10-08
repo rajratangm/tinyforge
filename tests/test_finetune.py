@@ -105,3 +105,19 @@ def test_eval_recomputes_an_fp16_overflow_in_bf16_instead_of_reporting_nan():
 
     assert finetune.eval_loss(AlwaysNan(), DS(), 4, 2, "cpu", torch.float16, 0, {}) != finetune.eval_loss(
         Overflowy(), DS(), 4, 2, "cpu", torch.float16, 0, {})
+
+
+def test_multi_gpu_split_is_complete_balanced_and_identical_on_every_rank():
+    class DS:
+        items = [([1] * n, [1]) for n in (400, 380, 90, 80, 70, 60, 50, 40, 30, 20)]
+
+    batches = [[0], [1], [2, 3], [4, 5], [6, 7, 8], [9]]
+    shares = [finetune._share(batches, DS, r, 2) for r in range(2)]
+    assert sorted(i for s in shares for b in s for i in b) == list(range(10))  # nothing lost or duplicated
+    assert finetune._share(batches, DS, 0, 1) == batches  # one GPU keeps everything, in order
+
+    def load(share):
+        return sum(len(b) * max(len(DS.items[i][0]) for i in b) for b in share)
+
+    assert abs(load(shares[0]) - load(shares[1])) <= 400  # balanced to within the largest single batch
+    assert shares == [finetune._share(batches, DS, r, 2) for r in range(2)]  # deterministic
