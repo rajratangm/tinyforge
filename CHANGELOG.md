@@ -2,6 +2,8 @@
 Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1.0: minor versions may break.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-10-08
 ### Added
 - Optional Soup training backend (`spec.backend: soup`): layer streaming trains models larger than VRAM (8B on
   a 4 GB GPU measured); isolated subprocess, telemetry off, allow-listed outputs. See docs/soup-backend.md.
