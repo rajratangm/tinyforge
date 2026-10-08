@@ -3,6 +3,10 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-09
+### Fixed
+- README status line (shown on PyPI) wrongly said multi-GPU was untested; it now states the Kaggle 2x T4 result.
+
 ## [0.1.1] - 2026-10-08
 ### Added
 - Multi-GPU: data-parallel LoRA fine-tuning on one machine (`tinyforge ft train --gpus N`, or `resources.gpus: N`

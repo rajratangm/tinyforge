@@ -4,8 +4,8 @@ Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed 
 One engine, three front doors: **CLI** (for developers/CI), **REST API**, and a **web UI** (which can later be
 wrapped as a desktop app with Tauri/Electron without changing the backend).
 
-**Status: early alpha (0.1).** Tested on Windows and on Linux (a Colab T4 GPU), each with one NVIDIA GPU; multi-GPU and
-Kubernetes-with-GPU are not tested yet. Step-by-step Linux, Windows and Colab instructions: [`docs/install.md`](docs/install.md).
+**Status: early alpha (0.1).** Tested on Windows (RTX 3050 Ti), on Linux (a Colab T4) and on a Kaggle 2x T4 machine (data-parallel
+LoRA works, but scales only 1.2-1.4x); Kubernetes-with-GPU is not tested yet. Step-by-step Linux, Windows and Colab instructions: [`docs/install.md`](docs/install.md).
 Install: `pip install tinyforge`, then `tinyforge doctor` to see what else you need
 (PyTorch, `pip install "tinyforge[finetune]"`, and optional pieces such as Soup and llama.cpp).
 
