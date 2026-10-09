@@ -8,7 +8,7 @@ from pathlib import Path
 CONTINUE = "Continue this text from my documents:\n\n"
 
 
-def continuation_rows(chunks: list[dict], min_words: int = 40) -> list[dict]:
+def continuation_rows(chunks: list[dict], min_words: int = 30) -> list[dict]:
     """No teacher model: show the first half of a passage, ask for the second half.
 
     This teaches the wording and style of the documents. It does NOT teach answering questions."""
@@ -34,7 +34,7 @@ def build_training_file(data: Path, work: Path, teacher_url: str = "", teacher_m
 
     from . import etl, pairs
 
-    chunks, _meta, _rep = etl.ingest([data])
+    chunks, _meta, _rep = etl.ingest([data], max_words=100, min_words=20)
     if not chunks:
         raise ValueError("I found no readable text (I read .txt, .md and .html; install tinyforge[docs] for "
                          "pdf/docx/pptx/xlsx).")

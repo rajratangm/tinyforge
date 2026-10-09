@@ -632,7 +632,8 @@ def easy(
     d, r = str(workdir / "data"), str(workdir / "model")
     stages = [
         (2, "Checking the examples are clean (no duplicates, no passwords)...",
-         base + ["data", "--source", str(examples), "--out", d, "--base-model", model, "--limit", "5000"]),
+         base + ["data", "--source", str(examples), "--out", d, "--base-model", model, "--limit", "5000",
+                         "--val-pct", "15"]),
         (3, "Checking the model fits your graphics card...", base + ["plan", "--base-model", model]),
         (4, "Teaching the model (this is the slow part; a few minutes)...",
          base + ["train", "--base-model", model, "--steps", str(steps), "--data-dir", d, "--run-dir", r]),
@@ -643,6 +644,10 @@ def easy(
         say(n, text)
         if subprocess.run(cmd).returncode != 0:
             console.print("[bold red]That step failed. Read the message above; it says how to fix it.[/]")
+            if n == 2:
+                console.print("Most likely there is too little text. I refuse to train on a handful of "
+                              "examples because the result would be meaningless. Add more files (about "
+                              "100 passages of ~100 words is the minimum), or pass a .jsonl of examples.")
             raise typer.Exit(1)
     console.print("\n[bold green]Done![/] Talk to your model:\n"
                   f'  tinyforge ft generate "your question here" --run-dir {r}\n'

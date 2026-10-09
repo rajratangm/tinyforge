@@ -66,6 +66,9 @@ prints the one line you type to talk to your model. Each of the 5 steps says wha
 - **Want it to answer questions?** add `--teacher-url http://.../v1` (any OpenAI-compatible chat endpoint) and a teacher
   model writes grounded question-and-answer pairs from your files first.
 - **Your own examples:** pass a `.jsonl` with `instruction`/`output` (or `messages`) fields and it is used as it is.
+- **Too little text is refused, on purpose.** A first try with 74 KB of docs (52 examples at the old 300-word passage size)
+  was stopped by the data gate (FD001/FD004); passages are now ~100 words, which gives 135 examples from the same files.
+  The gate still warns below 500 examples: expect style, not knowledge.
 - Gated or private model? Run `huggingface-cli login` first.
 
 ## What you get
@@ -151,6 +154,7 @@ raw numbers. These are single runs on small test sets, not benchmarks: read the 
 | Llama-3.1-8B fine-tuned on a 4 GB GPU (layer streaming through the job spec), served with llama.cpp | trained 200 steps in 9.5 min; on 100 questions about a table it never saw: **100%** execution accuracy vs **93%** for the same model told to reply with SQL only | [`e8-penguins-8b-soup.json`](benchmarks/e8-penguins-8b-soup.json) |
 | Same 8B model, harder question shapes never used in training | **98%** vs **97%**: no meaningful gain over a well-prompted base model. Fine-tuning mostly fixed output format | [`e8-penguins-8b-hard.json`](benchmarks/e8-penguins-8b-hard.json) |
 | Qwen2.5-3B fine-tuned end to end (data -> train -> evaluate -> serve) | **98%** execution accuracy vs **70%** for the base model told to reply with SQL (0% without that instruction) | [`e2e-titanic-3b-soup.json`](benchmarks/e2e-titanic-3b-soup.json) |
+| `tinyforge ft pipeline --steps 100 --limit 500` on a fresh `pip install` (SmolLM2-360M-Instruct, 474 Alpaca examples, 4 GB laptop GPU, bf16, no quantization) | passed the gate: held-out loss **1.413 -> 1.374 (-2.7%)**, general-text loss 1.563 -> 1.526 (no forgetting), 2.3 GB peak training memory, ~2,100 tok/s. Only a small style change on 474 examples (the tool itself warns FD001: style transfer, not new knowledge). Generations stay close to the base model's | no JSON file; terminal output of one run |
 | Soup-trained adapter, quality check (3B) | exact match 4% -> 45%, SQL that runs 9% -> 88% on 100 held-out rows | [`soup-adapter-check-qwen3b.json`](benchmarks/soup-adapter-check-qwen3b.json) |
 | Chunked cross-entropy (memory saving), Qwen2.5-1.5B 4-bit | peak GPU memory 3.65 -> 2.95 GB, 289 -> 499 tok/s, same loss | [`chunked-ce-qwen1p5b-4bit-rerun.json`](benchmarks/chunked-ce-qwen1p5b-4bit-rerun.json) |
 | llama.cpp inference options, 3B | flash attention ~8% faster; 8-bit KV cache halves the cache (144 -> 76.5 MB); n-gram speculation 129 vs 54.5 tok/s only on repeated requests (no gain on a first request) | [`inference-techniques-qwen3b.json`](benchmarks/inference-techniques-qwen3b.json) |
