@@ -48,28 +48,69 @@ tinyforge generate "ROMEO:" --int8
 tinyforge serve                    # UI at http://127.0.0.1:8000
 ```
 
-## Use your own data and your own model (the easy way)
+## Use your own data and your own model (step by step)
 
-Three things: a folder of your files, a model name from [huggingface.co](https://huggingface.co/models) (pick one with
-"instruct" or "chat" in the name, up to about 3B for a 4 GB GPU), and one command.
+You need three things: **your data** (a file or folder), **a model** (any chat/instruct model from
+[huggingface.co/models](https://huggingface.co/models), up to about 3B for a 4 GB GPU) and **one command**.
+Everything it makes lands in one folder you choose, so nothing is scattered.
 
+**Step 1. Make a clean Python environment.**
+```bash
+python3 -m venv .venv && source .venv/bin/activate        # Windows: py -3 -m venv .venv ; .venv\Scripts\Activate.ps1
+```
+
+**Step 2. Install.** Use `/cpu` instead of `/cu124` if you have no NVIDIA GPU (much slower).
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu124
 pip install "tinyforge[finetune]"
-tinyforge easy path/to/my_files --model HuggingFaceTB/SmolLM2-360M-Instruct
+tinyforge doctor        # shows your GPU, and which optional parts are missing
 ```
 
-`tinyforge easy` reads your `.txt`/`.md`/`.html` files (or a `.jsonl` of examples), trains, tests the result and then
-prints the one line you type to talk to your model. Each of the 5 steps says what it is doing in plain words.
+**Step 3. Put your data somewhere.** Any one of these works:
 
-- **Files only (no teacher):** the model learns the *wording* of your documents, not how to answer questions about them.
-- **Want it to answer questions?** add `--teacher-url http://.../v1` (any OpenAI-compatible chat endpoint) and a teacher
-  model writes grounded question-and-answer pairs from your files first.
-- **Your own examples:** pass a `.jsonl` with `instruction`/`output` (or `messages`) fields and it is used as it is.
-- **Too little text is refused, on purpose.** A first try with 74 KB of docs (52 examples at the old 300-word passage size)
-  was stopped by the data gate (FD001/FD004); passages are now ~100 words, which gives 135 examples from the same files.
-  The gate still warns below 500 examples: expect style, not knowledge.
-- Gated or private model? Run `huggingface-cli login` first.
+| Your data | What to pass | What tinyforge does |
+|---|---|---|
+| A folder of `.txt` / `.md` / `.html` files | `my_files` | cuts it into ~100-word passages and makes "finish this text" examples |
+| One document | `notes.md` | same |
+| PDF, Word, PowerPoint, Excel | `pip install "tinyforge[docs]"`, then pass the folder | same, after extracting the text |
+| Question/answer examples | `examples.jsonl`, one JSON per line, e.g. `{"instruction": "What is X?", "output": "X is ..."}` (or `{"messages": [...]}`) | uses it as it is |
+
+**Step 4. Pick your model.** Copy its id from its Hugging Face page (the `owner/name` at the top). Prefer names with
+"instruct" or "chat" (a model with no chat template is rejected with `FD007`). Private or gated model? Run
+`huggingface-cli login` first. Not sure what fits? `tinyforge ft plan --base-model owner/name` answers in seconds.
+
+**Step 5. Run it.**
+```bash
+tinyforge easy my_files --model HuggingFaceTB/SmolLM2-360M-Instruct --workdir my_run
+```
+`--steps 100` is a good start for a small folder. Five numbered steps print in plain words: read your files, check the examples
+(duplicates, passwords, personal data), check the model fits your GPU, train, test.
+
+**Step 6. Find your results.** All under `my_run/` (default `tinyforge_easy/`):
+
+| Path | What it is |
+|---|---|
+| `examples.jsonl` | the training examples made from your files; open it to see exactly what the model learned from |
+| `data/train.jsonl`, `data/val.jsonl`, `data/meta.json` | the cleaned split and its counts |
+| `model/best/` | your tuned model (a small LoRA adapter, the best checkpoint) |
+| `model/merged/` | the same, merged into a normal Hugging Face model folder |
+| `model/eval.json` | the test report: loss before vs after, forgetting, sample answers |
+
+**Step 7. Talk to it, and compare with the original.**
+```bash
+tinyforge ft generate "your question here" --run-dir my_run/model
+tinyforge ft generate "your question here" --run-dir my_run/model --base
+```
+
+**If something goes wrong**
+- *"Too little text"*: the data gate refuses a handful of examples on purpose. About 100 passages of ~100 words is the
+  minimum; the gate warns below 500 (expect style, not knowledge).
+- *The model only repeats your wording and cannot answer questions*: files alone teach wording. Add `--teacher-url
+  http://.../v1` (any OpenAI-compatible chat endpoint) and a teacher model writes grounded question-and-answer pairs from
+  your files first. Or write your own `.jsonl` (Step 3).
+- *Val loss got worse (FT002)*: it trained too long for so little data. The best checkpoint is already kept; use fewer
+  `--steps`.
+- *Out of memory*: pick a smaller model, or run `tinyforge memory`.
 
 ## What you get
 
