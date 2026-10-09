@@ -16,6 +16,8 @@ result where fine-tuning did **not** help (98% vs 97%).
 
 ![tinyforge doctor and the bad-model tests, recorded from real runs](docs/images/demo.gif)
 
+**Try the result:** the 3B text-to-SQL adapter trained this way is on Hugging Face: [RajGMore/tinyforge-qwen2.5-3b-titanic-sql-lora](https://huggingface.co/RajGMore/tinyforge-qwen2.5-3b-titanic-sql-lora) (7 MB, with the caveats in its model card).
+
 If it saves you an evening, a star helps other people with small GPUs find it.
 
 Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed against a 4 GB RTX 3050 Ti).
