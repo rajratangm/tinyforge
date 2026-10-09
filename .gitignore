@@ -21,3 +21,4 @@ tools/bin/
 *.bak
 agent-state/
 .coverage
+LAUNCH_KIT.md

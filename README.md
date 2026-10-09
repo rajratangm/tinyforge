@@ -1,5 +1,21 @@
 # tinyforge
 
+[![PyPI](https://img.shields.io/pypi/v/tinyforge)](https://pypi.org/project/tinyforge/)
+[![Python](https://img.shields.io/pypi/pyversions/tinyforge)](https://pypi.org/project/tinyforge/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![CI](https://github.com/rajratangm/tinyforge/actions/workflows/ci.yml/badge.svg)](https://github.com/rajratangm/tinyforge/actions)
+
+> **Fine-tune an 8B model on a 4 GB laptop GPU, then find out whether it is actually any good.**
+> `pip install tinyforge` gives you data prep, LoRA/QLoRA training, quality gates that fail bad models
+> (instead of printing "passed"), GGUF export and an OpenAI-compatible server, with plain-English warnings at every step.
+
+**Why it exists:** most fine-tuning guides stop at "loss went down". tinyforge checks the model against its base,
+tests for forgetting, and refuses to call a random-weight model good. Every number in
+[Verified results](#verified-results-what-was-actually-run) comes with a raw JSON file and its caveats, including the
+result where fine-tuning did **not** help (98% vs 97%).
+
+If it saves you an evening, a star helps other people with small GPUs find it.
+
 Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed against a 4 GB RTX 3050 Ti).
 One engine, three front doors: **CLI** (for developers/CI), **REST API**, and a **web UI** (which can later be
 wrapped as a desktop app with Tauri/Electron without changing the backend).
