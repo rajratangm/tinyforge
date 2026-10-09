@@ -48,6 +48,26 @@ tinyforge generate "ROMEO:" --int8
 tinyforge serve                    # UI at http://127.0.0.1:8000
 ```
 
+## Use your own data and your own model (the easy way)
+
+Three things: a folder of your files, a model name from [huggingface.co](https://huggingface.co/models) (pick one with
+"instruct" or "chat" in the name, up to about 3B for a 4 GB GPU), and one command.
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+pip install "tinyforge[finetune]"
+tinyforge easy path/to/my_files --model HuggingFaceTB/SmolLM2-360M-Instruct
+```
+
+`tinyforge easy` reads your `.txt`/`.md`/`.html` files (or a `.jsonl` of examples), trains, tests the result and then
+prints the one line you type to talk to your model. Each of the 5 steps says what it is doing in plain words.
+
+- **Files only (no teacher):** the model learns the *wording* of your documents, not how to answer questions about them.
+- **Want it to answer questions?** add `--teacher-url http://.../v1` (any OpenAI-compatible chat endpoint) and a teacher
+  model writes grounded question-and-answer pairs from your files first.
+- **Your own examples:** pass a `.jsonl` with `instruction`/`output` (or `messages`) fields and it is used as it is.
+- Gated or private model? Run `huggingface-cli login` first.
+
 ## What you get
 
 | Stage | What it does | Guard rails (warning codes) |

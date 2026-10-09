@@ -600,6 +600,55 @@ def ft_pipeline(
     console.print("[bold green]Fine-tuning pipeline complete.[/]")
 
 
+@app.command()
+def easy(
+    data: Annotated[Path, typer.Argument(help="Your file/folder (.txt .md .html) or a .jsonl of examples.")],
+    model: Annotated[str, typer.Option(help="Any Hugging Face chat/instruct model id.")] =
+    "HuggingFaceTB/SmolLM2-360M-Instruct",
+    steps: int = 200, workdir: Path = Path("tinyforge_easy"),
+    teacher_url: Annotated[str, typer.Option(help="Optional: OpenAI-compatible URL (.../v1) that writes "
+                                             "questions and answers from your documents.")] = "",
+    teacher_model: str = "default", api_key: str = "",
+) -> None:
+    """The simple way: give me your data and a model, I do every step and explain it."""
+    import subprocess
+    import sys
+
+    from . import easy as easy_mod
+
+    def say(n: int, text: str) -> None:
+        console.rule(f"[bold]Step {n} of 5[/]")
+        console.print(text)
+
+    say(1, "Reading your files and turning them into practice examples...")
+    try:
+        examples, note = easy_mod.build_training_file(data, workdir, teacher_url, teacher_model, api_key)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[bold red]{exc}[/]")
+        raise typer.Exit(1) from exc
+    console.print(note)
+
+    base = [sys.executable, "-m", "tinyforge", "ft"]
+    d, r = str(workdir / "data"), str(workdir / "model")
+    stages = [
+        (2, "Checking the examples are clean (no duplicates, no passwords)...",
+         base + ["data", "--source", str(examples), "--out", d, "--base-model", model, "--limit", "5000"]),
+        (3, "Checking the model fits your graphics card...", base + ["plan", "--base-model", model]),
+        (4, "Teaching the model (this is the slow part; a few minutes)...",
+         base + ["train", "--base-model", model, "--steps", str(steps), "--data-dir", d, "--run-dir", r]),
+        (5, "Testing it: is it better than before, and did it forget old skills?",
+         base + ["eval", "--run-dir", r]),
+    ]
+    for n, text, cmd in stages:
+        say(n, text)
+        if subprocess.run(cmd).returncode != 0:
+            console.print("[bold red]That step failed. Read the message above; it says how to fix it.[/]")
+            raise typer.Exit(1)
+    console.print("\n[bold green]Done![/] Talk to your model:\n"
+                  f'  tinyforge ft generate "your question here" --run-dir {r}\n'
+                  f"Compare with the original model by adding --base.")
+
+
 methods_app = typer.Typer(help="Choose a fine-tuning method that fits this machine.")
 app.add_typer(methods_app, name="methods")
 
