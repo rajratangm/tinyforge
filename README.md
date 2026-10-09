@@ -14,6 +14,8 @@ tests for forgetting, and refuses to call a random-weight model good. Every numb
 [Verified results](#verified-results-what-was-actually-run) comes with a raw JSON file and its caveats, including the
 result where fine-tuning did **not** help (98% vs 97%).
 
+![tinyforge doctor and the bad-model tests, recorded from real runs](docs/images/demo.gif)
+
 If it saves you an evening, a star helps other people with small GPUs find it.
 
 Train, evaluate and serve **small LLMs from scratch on modest GPUs** (developed against a 4 GB RTX 3050 Ti).
