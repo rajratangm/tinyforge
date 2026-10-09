@@ -18,7 +18,7 @@ result where fine-tuning did **not** help (98% vs 97%).
 
 **Try the result:** the 3B text-to-SQL adapter trained this way is on Hugging Face: [RajGMore/tinyforge-qwen2.5-3b-titanic-sql-lora](https://huggingface.co/RajGMore/tinyforge-qwen2.5-3b-titanic-sql-lora) (7 MB, with the caveats in its model card).
 
-**Watch a full run (67 s):** [doctor -> data -> plan -> train -> eval gate -> serve](docs/images/tinyforge-end-to-end.mp4), recorded from one real run on a 4 GB laptop GPU (training sped up; it took 6 min 23 s).
+**Watch a full run (6 min, narrated):** [doctor -> data -> plan -> train -> eval gate -> serve](docs/images/tinyforge-end-to-end.mp4), recorded from one real run on a 4 GB laptop GPU (training sped up; it took 6 min 23 s).
 
 More: [honest comparison with Unsloth, Axolotl and LLaMA-Factory](docs/compare.md) · [Hugging Face collection](https://huggingface.co/collections/RajGMore/tinyforge-fine-tuned-on-a-4-gb-gpu-6ac8756a71fe1a822bce9527) (3B and 8B text-to-SQL adapters).
 
