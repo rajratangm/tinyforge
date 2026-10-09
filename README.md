@@ -36,7 +36,8 @@ Install: `pip install tinyforge`, then `tinyforge doctor` to see what else you n
 ## Quick start
 
 The same commands work on Linux and Windows (venv activation, environment variables and `curl` differ: see
-[`docs/install.md`](docs/install.md) for both).
+[`docs/installation_guides/install.md`](docs/install.md) for both). Also available in
+[Hindi](docs/installation_guides/install.hindi.md), [Español](docs/installation_guides/install.spanish.md) and [简体中文](docs/installation_guides/install.zh-chinese.md).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate        # Windows: py -3 -m venv .venv ; .venv\Scripts\Activate.ps1
