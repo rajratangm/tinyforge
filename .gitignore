@@ -22,3 +22,4 @@ tools/bin/
 agent-state/
 .coverage
 LAUNCH_KIT.md
+tinyforge_easy/
