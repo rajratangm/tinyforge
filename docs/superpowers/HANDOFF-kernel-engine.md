@@ -28,11 +28,7 @@ Full suite at Task 11: 439 passed, 1 skipped; ruff clean; `go vet`/`go test ./..
 `.venv\Scripts\python -m pytest -q --no-cov` and `.venv\Scripts\ruff check src tests`.
 
 ## Task 12: what remains (do in this order)
-1. **Benchmark 360M** (`tinyforge kernels bench --model HuggingFaceTB/SmolLM2-360M-Instruct --steps 30 --out
-   benchmarks/kernels-phase1-smollm2-360m.json`). GPU must be idle. **Any numbers produced before commit `a9c22f1`
-   are invalid** (see findings 1 and 2); a first run showed +18.6% tok/s and 2.19 -> 1.36 GB peak, but SwiGLU had
-   silently fallen back, so do not quote it. If `benchmarks/kernels-phase1-smollm2-360m.json` exists and was
-   written after `a9c22f1`, it is the valid result; check `kernel_report.skipped == {}` and `loss_close`.
+1. **Benchmark 360M: DONE after `a9c22f1`** (`benchmarks/kernels-phase1-smollm2-360m.json`: +14.5% tok/s, 2.19 to 1.34 GB peak, same loss; see `docs/kernels.md` Results). Re-run only if kernels change.
 2. Same for Qwen2.5-1.5B 4-bit (`--model Qwen/Qwen2.5-1.5B-Instruct --quant 4bit`, data in `data/sql` or `data/ft`
    prepared for that tokenizer) if it fits; expect `rmsnorm` to fall back under 4-bit (fp32 norm weights).
 3. Greedy `ft generate` with `--kernels off` vs `auto` against a trained adapter (`runs/kernel-bench/auto`).

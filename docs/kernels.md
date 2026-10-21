@@ -96,6 +96,22 @@ Safety nets, all tested:
 
 ## Results
 
-Recorded runs live in `benchmarks/` (`kernels-smoke.json`, `kernels-phase1-*.json`). At the time of writing only
-`kernels-smoke.json` (Triton compiles and runs on the 3050 Ti) is a final result; see
-`docs/superpowers/HANDOFF-kernel-engine.md` for the state of the acceptance runs.
+Recorded runs live in `benchmarks/`.
+
+**Fine-tuning SmolLM2-360M-Instruct, 30 steps, bf16, 256-token examples, RTX 3050 Ti 4 GB, kernels off vs auto**
+(`benchmarks/kernels-phase1-smollm2-360m.json`; each mode in its own process; `kernel_report.json` written at the
+end of the run shows all four kernels still active, nothing fell back):
+
+| | off | auto | change |
+|---|---|---|---|
+| tokens/s (median, step 1 excluded) | 1406 | 1611 | **+14.5%** |
+| peak GPU memory | 2.19 GB | 1.34 GB | **-0.84 GB (-39%)** |
+| final training loss | 1.39132 | 1.39132 | same |
+
+Two valid runs on this machine gave +17.4% and +14.5%, so read it as "about +15%, run to run noise of a couple of
+points". One model, one GPU, 30 steps: indicative, not a guarantee for other setups. Per-kernel micro-benchmark
+speed-ups at the tuned shapes (reference time / kernel time, includes backward): rmsnorm 2.7x, rope 1.9x,
+fused cross-entropy 1.5x, swiglu 1.3x. Most of the memory saving comes from the fused cross-entropy.
+
+Also recorded: `kernels-smoke.json` (Triton compiles and runs on the 3050 Ti).
+Not yet run: Qwen2.5-1.5B 4-bit; the greedy-generation comparison is partly done (see the handoff file).
