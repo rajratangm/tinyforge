@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "reason": "",
+  "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "compute_capability": "8.6",
+  "triton_version": "3.8.0"
+}

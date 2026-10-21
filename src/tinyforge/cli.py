@@ -397,6 +397,29 @@ def pipeline(
     console.print("[bold green]Pipeline complete.[/]")
 
 
+kernels_app = typer.Typer(help="Verified Triton kernels for training and inference.")
+app.add_typer(kernels_app, name="kernels")
+
+
+@kernels_app.command("doctor")
+def kernels_doctor(as_json: JsonOpt = False) -> None:
+    """Check that Triton kernels can compile and run on this machine."""
+    from dataclasses import asdict
+
+    from .kernels.env import triton_status
+
+    s = triton_status()
+    if as_json:
+        console.print_json(json.dumps(asdict(s)))
+    elif s.ok:
+        console.print(f"[green]Triton {s.triton_version} works on {s.gpu} (sm_{s.compute_capability}).[/]")
+    else:
+        console.print(f"[yellow]Triton kernels unavailable:[/] {escape(s.reason)}")
+        console.print("Runs fall back to PyTorch ops; nothing breaks.")
+    if not s.ok:
+        raise typer.Exit(1)
+
+
 ft_app = typer.Typer(help="Fine-tune pretrained models with LoRA/QLoRA.")
 app.add_typer(ft_app, name="ft")
 BaseOpt = Annotated[str, typer.Option(help="Hugging Face model id.")]
