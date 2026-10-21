@@ -52,12 +52,11 @@ def toy_specs():
             supports=lambda shape: True, example_shape=(4, 8),
             make_inputs=lambda shape, dtype, device: (torch.randn(shape, dtype=dtype, device=device),))
 
-    before = dict(registry._SPECS)
     registry.register(make("toy_ok", 2.0))
     registry.register(make("toy_wrong", 2.5))
     yield
-    registry._SPECS.clear()
-    registry._SPECS.update(before)
+    for name in ("toy_ok", "toy_wrong"):  # a snapshot restore would also drop built-ins imported meanwhile
+        registry._SPECS.pop(name, None)
 
 
 def test_verify_cli_exit_code_nonzero_on_failure(toy_specs):

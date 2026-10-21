@@ -405,8 +405,9 @@ def ft_generate(req: FTGenRequest):
             mode = os.environ.get("TINYFORGE_KERNELS", "off")
             if mode != "off" and hw.device == "cuda":
                 from .kernels.patch import apply_kernels
+                from .kernels.user import kernel_search_path
 
-                apply_kernels(peft_model, mode, inference=True)
+                apply_kernels(peft_model, mode, inference=True, user_paths=kernel_search_path(None))
             _ft_models["m"] = (
                 peft_model,
                 load_tokenizer(cfg.base_model),

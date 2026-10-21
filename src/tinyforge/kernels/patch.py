@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 import torch
 
@@ -104,16 +105,20 @@ def _is_layer(m: torch.nn.Module) -> bool:
             and all(hasattr(m, a) for a in LAYER_ATTRS))
 
 
-def _decide(name: str, shape: tuple[int, ...], dtype: torch.dtype, mode: str, report: KernelReport):
+def _decide(spec, shape: tuple[int, ...], dtype: torch.dtype, mode: str, report: KernelReport,
+            key: str | None = None):
+    """Verify + tune `spec` (a KernelSpec or a registered name); returns its params if it should be used."""
+    spec = registry.get(spec) if isinstance(spec, str) else spec
+    key = key or spec.name
     try:
-        r = tune(registry.get(name), shape, dtype, "cuda")
+        r = tune(spec, shape, dtype, "cuda")
     except Exception as e:
-        report.skipped[name] = f"tuning failed: {type(e).__name__}: {e}"[:300]
+        report.skipped[key] = f"tuning failed: {type(e).__name__}: {e}"[:300]
         return None
     if r.adopted or (mode == "force" and r.kernel_ms > 0):
-        report.speedups[name] = round(r.ref_ms / r.kernel_ms, 3) if r.kernel_ms else 0.0
+        report.speedups[key] = round(r.ref_ms / r.kernel_ms, 3) if r.kernel_ms else 0.0
         return r.params
-    report.skipped[name] = r.reason or "not adopted"
+    report.skipped[key] = r.reason or "not adopted"
     return None
 
 
@@ -130,8 +135,10 @@ def _probe_logits(base: torch.nn.Module) -> torch.Tensor:
         base.train(was_training)
 
 
-def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = False) -> KernelReport:
-    """mode: off | auto (adopt only what is faster or saves memory) | force (adopt anything that verifies)."""
+def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = False,
+                  user_paths: list[Path] | None = None) -> KernelReport:
+    """mode: off | auto (adopt only what is faster or saves memory) | force (adopt anything that verifies).
+    user_paths: files/folders of user-defined kernels to load (explicit only, see kernels/user.py)."""
     report = KernelReport()
     model._tinyforge_kernel_report = report
     if mode == "off":
@@ -206,6 +213,9 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
         for m in layers:
             _wrap_forward(m, "add_rmsnorm", _layer_forward(m, params, add_rmsnorm), patches)
 
+    if user_paths:
+        _apply_user_kernels(base, user_paths, dtype, mode, report, patches)
+
     if inference and patches.undo:
         tol = (2e-3 if dtype == torch.float32 else 6e-2) * max(1.0, ref_logits.abs().max().item())
         try:
@@ -215,6 +225,40 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
         if not ok:
             patches.restore_all("end-to-end logits check failed after patching")
     return report
+
+
+def _apply_user_kernels(base, user_paths, dtype, mode, report: KernelReport, patches: _Patches) -> None:
+    from .user import load_user_kernels
+
+    specs, errors = load_user_kernels(list(user_paths))
+    for path, err in errors.items():
+        report.skipped[f"user:{Path(path).name}"] = f"could not load: {err}"
+    for spec in specs:
+        key = f"user:{spec.name}"
+        if spec.target is None:
+            report.skipped[key] = "the kernel defines no target, so there is nothing to patch (verify-only)"
+            continue
+        try:
+            matches = [m for m in base.modules() if spec.target.match(m)]
+            if not matches:
+                report.skipped[key] = "no module in this model matches the kernel's target"
+                continue
+            params = _decide(spec, spec.target.shape_for(matches[0]), dtype, mode, report, key)
+            if params is None:
+                continue
+            forwards = [spec.target.make_forward(m, params) for m in matches]
+        except Exception as e:  # match / shape_for / make_forward are the user's code: report, never crash
+            report.skipped[key] = f"{type(e).__name__}: {e}"[:300]
+            continue
+        for m, fwd in zip(matches, forwards, strict=True):
+            _wrap_forward(m, key, _user_forward(fwd), patches)
+
+
+def _user_forward(fwd):
+    def new(*args, **kwargs):
+        out = fwd(*args, **kwargs)
+        return _FALLBACK if out is NotImplemented else out
+    return new
 
 
 def _patch_rope_global(mod, params: dict, rope_mod, patches: _Patches) -> None:

@@ -19,10 +19,8 @@ def _spec(name: str) -> KernelSpec:
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    before = dict(registry._SPECS)
     yield
-    registry._SPECS.clear()
-    registry._SPECS.update(before)
+    registry._SPECS.pop("toy", None)  # only what these tests add: built-ins register once, at first import
 
 
 def test_register_and_get():

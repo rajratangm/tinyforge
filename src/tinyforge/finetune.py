@@ -56,6 +56,7 @@ class FTConfig(BaseModel):
     chunked_ce: bool = True  # project only labelled positions through the LM head, in chunks (see memory.py)
     ce_chunk: int = 2048
     kernels: Literal["off", "auto", "force"] = "off"  # verified Triton kernels, see kernels/
+    kernel_path: Path | None = None  # your own kernel files/folders (explicit; never loaded from a JobSpec)
     eval_interval: int = 50
     eval_examples: int = 64
     seed: int = 1337
@@ -393,8 +394,9 @@ def _enable_kernels(model, c: FTConfig, device: str, event) -> bool | dict:
     if c.kernels == "off" or device != "cuda":
         return False
     from .kernels.patch import apply_kernels, decide_fused_ce
+    from .kernels.user import kernel_search_path
 
-    report = apply_kernels(model, c.kernels)
+    report = apply_kernels(model, c.kernels, user_paths=kernel_search_path(c.kernel_path))
     fused = decide_fused_ce(model, c.kernels, report) if c.chunked_ce else None
     _write_kernel_report(model, c)
     event("kernels", **report.as_dict())

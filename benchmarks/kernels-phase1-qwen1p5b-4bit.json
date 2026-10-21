@@ -1,0 +1,33 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "steps": 20,
+  "quant": "4bit",
+  "off": {
+    "tok_per_s": 420.6542370794701,
+    "peak_mem_gb": 2.9536948204040527,
+    "final_loss": 0.06289667123928666
+  },
+  "auto": {
+    "tok_per_s": 438.87453075065775,
+    "peak_mem_gb": 2.4990344047546387,
+    "final_loss": 0.06276447931304574
+  },
+  "loss_close": true,
+  "speedup": 1.0433141807810806,
+  "vram_saved_gb": 0.45466041564941406,
+  "kernel_report": {
+    "patched": [
+      "rmsnorm",
+      "swiglu",
+      "rope",
+      "fused_ce"
+    ],
+    "skipped": {},
+    "speedups": {
+      "rmsnorm": 3.309,
+      "swiglu": 1.381,
+      "rope": 1.908,
+      "fused_ce": 1.637
+    }
+  }
+}

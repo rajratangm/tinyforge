@@ -77,6 +77,7 @@ select = ["E", "F", "I", "B", "UP"]
 "src/tinyforge/telemetry.py" = ["E501"]  # prose strings
 "src/tinyforge/engines.py" = ["E501"]  # prose strings
 "tests/test_modelcard.py" = ["E501"]
+"src/tinyforge/kernels/codegen.py" = ["E501"]  # long Triton expression templates
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

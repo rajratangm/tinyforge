@@ -150,3 +150,85 @@ def test_the_shipped_template_kernel_matches_pytorch():
     for dtype in (torch.float32, torch.bfloat16):
         r = verify(spec, spec.example_shape, dtype, "cuda", **{k: v[0] for k, v in spec.tunables.items()})
         assert r.ok, r.reason
+
+
+def _gemma(dtype=torch.float32):
+    from transformers import GemmaConfig, GemmaForCausalLM
+
+    torch.manual_seed(0)
+    cfg = GemmaConfig(vocab_size=128, hidden_size=64, intermediate_size=128, num_hidden_layers=2,
+                      num_attention_heads=4, num_key_value_heads=2, head_dim=16, max_position_embeddings=64)
+    return GemmaForCausalLM(cfg).to("cuda", dtype)
+
+
+def _ids():
+    return torch.randint(0, 128, (2, 16), generator=torch.Generator().manual_seed(1)).to("cuda")
+
+
+@pytest.fixture
+def tune_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("TINYFORGE_CACHE", str(tmp_path / "cache"))
+
+
+@cuda
+def test_user_kernel_is_patched_into_a_gemma_style_model_and_matches(tmp_path, tune_cache):
+    from tinyforge.kernels.patch import apply_kernels
+
+    path = user.scaffold("my_geglu", tmp_path)
+    ref, m = _gemma(), _gemma()
+    r = apply_kernels(m, mode="force", user_paths=[path])
+    assert "user:my_geglu" in r.patched, r
+    x = _ids()
+    a, b = ref(x).logits, m(x).logits
+    assert (a - b).abs().max() < 1e-3 * max(1.0, a.abs().max().item())
+    a.sum().backward()
+    b.sum().backward()
+    ga, gb = ref.model.embed_tokens.weight.grad, m.model.embed_tokens.weight.grad
+    assert (ga - gb).abs().max() < 1e-3 * max(1.0, ga.abs().max().item())
+    assert "user:my_geglu" in r.patched and not any(k.startswith("user:") for k in r.skipped), r
+
+
+@cuda
+def test_user_kernel_runtime_failure_falls_back_with_the_reason(tmp_path, tune_cache):
+    from tinyforge.kernels.patch import apply_kernels
+
+    path = user.scaffold("boom_geglu", tmp_path)
+    text = path.read_text(encoding="utf-8")
+    needle = 'return mlp.down_proj(boom_geglu_fn(gate, up, params["BLOCK"], params["num_warps"]))'
+    assert needle in text
+    path.write_text(text.replace(needle, 'raise RuntimeError("user kernel exploded")'), encoding="utf-8")
+    ref, m = _gemma(), _gemma()
+    r = apply_kernels(m, mode="force", user_paths=[path])
+    assert "user:boom_geglu" in r.patched
+    x = _ids()
+    assert (ref(x).logits - m(x).logits).abs().max() < 1e-4  # fell back to the original, still correct
+    assert "user:boom_geglu" not in r.patched and "user kernel exploded" in r.skipped["user:boom_geglu"]
+
+
+@cuda
+def test_a_wrong_user_kernel_is_rejected_by_verification(tmp_path, tune_cache):
+    from tinyforge.kernels.patch import apply_kernels
+
+    path = user.scaffold("bad_geglu", tmp_path)
+    text = path.read_text(encoding="utf-8")
+    needle = "tl.store(y_ptr + offs, gelu * u, mask=m)"
+    assert needle in text
+    path.write_text(text.replace(needle, "tl.store(y_ptr + offs, gelu * u * 1.1, mask=m)"), encoding="utf-8")
+    m = _gemma()
+    r = apply_kernels(m, mode="force", user_paths=[path])
+    assert "user:bad_geglu" not in r.patched
+    assert "verif" in r.skipped["user:bad_geglu"]
+    assert not any("forward" in mod.__dict__ for mod in m.modules() if type(mod).__name__.endswith("MLP"))
+
+
+@cuda
+def test_user_kernel_that_matches_nothing_is_skipped_with_a_reason(tmp_path, tune_cache):
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+
+    from tinyforge.kernels.patch import apply_kernels
+
+    path = user.scaffold("lonely_geglu", tmp_path)
+    m = Qwen2ForCausalLM(Qwen2Config(vocab_size=64, hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+                                     num_attention_heads=2, num_key_value_heads=1)).cuda()
+    r = apply_kernels(m, mode="force", user_paths=[path])
+    assert "no module" in r.skipped["user:lonely_geglu"]

@@ -71,6 +71,25 @@ Safety nets, all tested:
 * **Gradient checkpointing.** PyTorch's non-reentrant checkpoint stops its recompute by raising an internal
   exception through the forward; patched forwards let it pass (this crashed training before it was fixed).
 
+## Write your own kernel
+
+```bash
+tinyforge kernels new my_kernel                          # writes tinyforge_kernels/my_kernel.py (a working GeGLU example)
+tinyforge kernels verify --file tinyforge_kernels/my_kernel.py   # same outputs AND gradients as PyTorch?
+tinyforge ft train ... --kernels auto --kernel-path tinyforge_kernels/my_kernel.py
+tinyforge serve --kernels auto --kernel-path tinyforge_kernels/my_kernel.py
+```
+
+A kernel file defines `SPEC` (or `SPECS`): a `KernelSpec` with the PyTorch `reference`, your Triton `kernel`,
+`tunables`, `make_inputs`, an `example_shape`, and (to be used in real runs) a `Target` saying which modules it
+replaces (`match`, `shape_for`, `make_forward`). The template documents every field. It goes through exactly the
+same gate as the built-in kernels: verified, tuned, used only if faster (or `memory_kernel=True`), restored on any
+failure, covered by the drift guard. Results appear in `kernel_report.json` as `user:NAME`.
+
+Safety: a kernel file is your own code running with your privileges. tinyforge reads only paths you pass with
+`--kernel-path` or `TINYFORGE_KERNEL_PATH`; it never loads anything from the current directory, from a JobSpec, or
+from the network. "Verified" means it matched PyTorch on the shapes and dtypes `verify` ran, not in general.
+
 ## What is and is not verified
 
 * Verified by tests (GPU: RTX 3050 Ti 4 GB, torch 2.6.0+cu124, triton 3.8.0, Windows): output and gradient

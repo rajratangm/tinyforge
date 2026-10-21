@@ -2,6 +2,16 @@
 Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1.0: minor versions may break.
 
 ## [Unreleased]
+### Added
+- Verified Triton kernels for training and serving (`--kernels off|auto|force`, default `off`): fused RMSNorm,
+  SwiGLU, RoPE (with grouped-query attention), cross-entropy and residual+RMSNorm. Each kernel is checked against
+  the PyTorch result (outputs and gradients), tuned per GPU, patched into the model, and put back automatically if
+  it ever fails; a first-batch drift guard switches kernels off if the loss changes by more than 2%. New commands:
+  `tinyforge kernels doctor|verify|bench|new`. On SmolLM2-360M (RTX 3050 Ti 4 GB, 30 steps) kernels gave about
+  +15% tokens/s and 2.19 -> 1.34 GB peak memory with the same loss; see `docs/kernels.md` and `benchmarks/`.
+- Your own kernels: `tinyforge kernels new NAME` writes a working template; `kernels verify --file F` checks it;
+  `--kernel-path F` uses it in `ft train|generate|pipeline` and `serve`. Loaded only from paths you name.
+- JobSpec `spec.kernels` (and the CRD / `forgectl` schema).
 
 ## [0.1.2] - 2026-10-09
 ### Fixed
