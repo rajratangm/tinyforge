@@ -112,3 +112,22 @@ def test_enable_kernels_off_does_nothing(tmp_path):
     fused = finetune._enable_kernels(torch.nn.Linear(2, 2), _cfg(tmp_path), "cuda", lambda *a, **k: None)
     assert fused is False
     assert not (tmp_path / "kernel_report.json").exists()
+
+
+@cuda
+def test_kernel_report_is_rewritten_with_runtime_fallbacks(tmp_path, monkeypatch):
+    from tinyforge.kernels import rmsnorm
+
+    m = _tiny()
+    c = _cfg(tmp_path, kernels="force")
+    finetune._enable_kernels(m, c, "cuda", lambda *a, **k: None)
+    assert "rmsnorm" in json.loads((tmp_path / "kernel_report.json").read_text())["patched"]
+
+    def boom(*a, **k):
+        raise RuntimeError("kernel died mid-run")
+
+    monkeypatch.setattr(rmsnorm, "rmsnorm_fn", boom)
+    m(input_ids=torch.randint(0, 128, (2, 8), device="cuda"))  # falls back at runtime
+    finetune._write_kernel_report(m, c)
+    final = json.loads((tmp_path / "kernel_report.json").read_text())
+    assert "rmsnorm" not in final["patched"] and "kernel died mid-run" in final["skipped"]["rmsnorm"]

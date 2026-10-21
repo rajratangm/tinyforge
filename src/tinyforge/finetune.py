@@ -379,6 +379,14 @@ def _is_mem_error(exc: BaseException) -> bool:
             or "CUBLAS_STATUS_INTERNAL_ERROR" in s or "CUBLAS_STATUS_ALLOC_FAILED" in s)
 
 
+def _write_kernel_report(model, c: FTConfig) -> None:
+    """kernel_report.json = what is patched right now; rewritten at the end so runtime fallbacks show up."""
+    report = getattr(model, "_tinyforge_kernel_report", None)
+    if report is not None:
+        text = json.dumps(report.as_dict(), indent=2)
+        (c.run_dir / "kernel_report.json").write_text(text, encoding="utf-8")
+
+
 def _enable_kernels(model, c: FTConfig, device: str, event) -> bool | dict:
     """Patch verified Triton kernels into the model. Returns the `fused` argument for causal_lm_loss:
     False (PyTorch cross-entropy) or the tuned parameters of the fused kernel."""
@@ -388,7 +396,7 @@ def _enable_kernels(model, c: FTConfig, device: str, event) -> bool | dict:
 
     report = apply_kernels(model, c.kernels)
     fused = decide_fused_ce(model, c.kernels, report) if c.chunked_ce else None
-    (c.run_dir / "kernel_report.json").write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    _write_kernel_report(model, c)
     event("kernels", **report.as_dict())
     return fused or False
 
@@ -655,6 +663,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     summary["examples_per_step_global"] = eps
     if div is not None:
         summary["ddp_max_param_divergence"] = div
+    if lead and c.kernels != "off":
+        _write_kernel_report(model, c)  # final state: includes any kernel that fell back during the run
     event("finished", **summary)
     log.close()
     if world > 1:

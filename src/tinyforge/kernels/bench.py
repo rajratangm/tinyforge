@@ -84,7 +84,8 @@ def _train_once(mode: str, model: str, steps: int, quant: str, data_dir: Path, w
     events = [json.loads(line) for line in lines]
     steps_ev = [e for e in events if e["event"] == "step"]
     finished = next(e for e in reversed(events) if e["event"] == "finished")
-    kernels = next((e for e in events if e["event"] == "kernels"), {})
+    report_file = run_dir / "kernel_report.json"  # rewritten when training ends: shows runtime fallbacks
+    kernels = json.loads(report_file.read_text(encoding="utf8")) if report_file.exists() else {}
     # step 1 includes warm-up and kernel compilation, so the median skips it
     return {"tok_per_s": statistics.median(e["tok_per_s"] for e in steps_ev[1:] or steps_ev),
             "peak_mem_gb": finished["peak_mem_gb"], "losses": [e["loss"] for e in steps_ev],
