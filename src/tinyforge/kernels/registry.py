@@ -18,6 +18,7 @@ class KernelSpec:
     tunables: dict[str, list[int]] = field(default_factory=dict)
     make_inputs: Callable[[tuple[int, ...], torch.dtype, str], tuple[torch.Tensor, ...]] | None = None
     memory_kernel: bool = False  # adopted for its memory saving even when not faster
+    needs_grad: bool = True  # False: inference-only kernel, verified and timed forward-only
 
 
 _SPECS: dict[str, KernelSpec] = {}

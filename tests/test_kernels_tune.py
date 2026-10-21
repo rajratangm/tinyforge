@@ -89,3 +89,24 @@ def test_all_candidates_failing_means_rejected(tmp_path):
     r = _tune(_spec(lambda x, **t: x * 3), tmp_path)
     assert r.adopted is False
     assert "verif" in r.reason
+
+
+def test_inference_only_kernels_are_timed_forward_only(tmp_path):
+    seen, timing = [], []
+
+    def ref(x):
+        if timing:  # ignore the verifier's calls; only the timed runner counts
+            seen.append(x.requires_grad)
+        return x * 2
+
+    def run_and_time(fn, label):
+        timing.append(label == "ref")
+        if label == "ref":
+            fn()
+        timing.pop()
+        return TIMES[label]
+
+    spec = _spec()
+    spec.reference, spec.needs_grad = ref, False
+    tune(spec, (4, 8), torch.float32, device="cpu", cache_dir=tmp_path, time_fn=run_and_time)
+    assert seen == [False]

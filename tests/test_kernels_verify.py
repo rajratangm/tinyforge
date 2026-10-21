@@ -51,3 +51,11 @@ def test_kernel_exception_is_captured():
     r = verify(_toy(boom), (4, 8), torch.float32, device="cpu")
     assert r.ok is False
     assert "compile exploded" in r.reason
+
+
+def test_verifier_skips_grad_when_not_needed():
+    spec = _toy(lambda x, **t: _WrongGrad.apply(x))
+    spec.needs_grad = False  # inference-only kernel: forward must match, backward is never used
+    r = verify(spec, (4, 8), torch.float32, device="cpu")
+    assert r.ok is True
+    assert r.grad_err == 0

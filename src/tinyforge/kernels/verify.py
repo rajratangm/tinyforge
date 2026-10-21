@@ -41,16 +41,18 @@ def verify(spec: KernelSpec, shape: tuple[int, ...], dtype: torch.dtype, device:
         base = spec.make_inputs(shape, dtype, device)
 
         def fresh():
-            return tuple(t.detach().clone().requires_grad_(t.is_floating_point()) for t in base)
+            return tuple(t.detach().clone().requires_grad_(spec.needs_grad and t.is_floating_point())
+                         for t in base)
 
         ref_in, ker_in = fresh(), fresh()
-        ref_probe = _as_tuple(spec.reference(*ref_in))
-        gen = torch.Generator(device=device).manual_seed(1)
-        cot = tuple(torch.randn(o.shape, generator=gen, device=device, dtype=torch.float32)
-                    for o in ref_probe)
+        with torch.set_grad_enabled(spec.needs_grad):
+            ref_probe = _as_tuple(spec.reference(*ref_in))
+            gen = torch.Generator(device=device).manual_seed(1)
+            cot = tuple(torch.randn(o.shape, generator=gen, device=device, dtype=torch.float32)
+                        for o in ref_probe)
 
-        ref_out, ref_g = _run(spec.reference, ref_in, cot, {})
-        ker_out, ker_g = _run(spec.kernel, ker_in, cot, tune)
+            ref_out, ref_g = _run(spec.reference, ref_in, cot, {})
+            ker_out, ker_g = _run(spec.kernel, ker_in, cot, tune)
     except Exception as e:
         return VerifyResult(False, float("inf"), float("inf"), f"{type(e).__name__}: {e}"[:400])
 

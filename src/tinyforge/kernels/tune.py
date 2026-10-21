@@ -81,8 +81,9 @@ def _time(fn: Callable[[], object], label: str) -> float:
     return statistics.median(times)
 
 
-def _runner(fn: Callable, base: tuple[torch.Tensor, ...], tune_kw: dict) -> Callable[[], None]:
-    inputs = tuple(t.detach().clone().requires_grad_(t.is_floating_point()) for t in base)
+def _runner(fn: Callable, base: tuple[torch.Tensor, ...], tune_kw: dict,
+            needs_grad: bool) -> Callable[[], None]:
+    inputs = tuple(t.detach().clone().requires_grad_(needs_grad and t.is_floating_point()) for t in base)
 
     def run() -> None:
         out = fn(*inputs, **tune_kw)
@@ -119,11 +120,11 @@ def tune(spec: KernelSpec, shape: tuple[int, ...], dtype: torch.dtype, device: s
     else:
         torch.manual_seed(0)
         base = spec.make_inputs(shape, dtype, device)
-        ref_ms = time_fn(_runner(spec.reference, base, {}), "ref")
+        ref_ms = time_fn(_runner(spec.reference, base, {}, spec.needs_grad), "ref")
         best, best_ms = passing[0], float("inf")
         for params in passing:
             label = ",".join(f"{k}={v}" for k, v in params.items()) or "default"
-            ms = time_fn(_runner(spec.kernel, base, params), label)
+            ms = time_fn(_runner(spec.kernel, base, params, spec.needs_grad), label)
             if ms < best_ms:
                 best, best_ms = params, ms
         faster = best_ms <= ref_ms * (1 - margin)
