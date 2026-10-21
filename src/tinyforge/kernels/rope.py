@@ -10,7 +10,7 @@ from . import registry
 
 
 @triton.jit
-def _rope(x_ptr, cos_ptr, sin_ptr, out_ptr, H, S, D, HALF, sxb, sxh, sxs,
+def _rope(x_ptr, cos_ptr, sin_ptr, out_ptr, H, S, D, HALF, sxb, sxh, sxs, cbs,
           BACKWARD: tl.constexpr, BLOCK: tl.constexpr):
     pid = tl.program_id(0)
     si = pid % S
@@ -19,7 +19,7 @@ def _rope(x_ptr, cos_ptr, sin_ptr, out_ptr, H, S, D, HALF, sxb, sxh, sxs,
     offs = tl.arange(0, BLOCK)
     m = offs < HALF
     xb = x_ptr + bi * sxb + hi * sxh + si * sxs
-    cb = (bi * S + si) * D
+    cb = bi * cbs + si * D  # cbs is 0 when cos/sin are shared across the batch ([1, S, D])
     x1 = tl.load(xb + offs, mask=m, other=0.0).to(tl.float32)
     x2 = tl.load(xb + HALF + offs, mask=m, other=0.0).to(tl.float32)
     c1 = tl.load(cos_ptr + cb + offs, mask=m, other=0.0).to(tl.float32)
@@ -43,6 +43,7 @@ def _apply(x, cos, sin, backward, num_warps):
     b, h, s, d = x.shape
     out = torch.empty(b, h, s, d, dtype=x.dtype, device=x.device)
     _rope[(b * h * s,)](x, cos, sin, out, h, s, d, d // 2, x.stride(0), x.stride(1), x.stride(2),
+                        0 if cos.shape[0] == 1 else s * d,
                         BACKWARD=backward, BLOCK=triton.next_power_of_2(d // 2), num_warps=num_warps)
     return out
 
@@ -66,6 +67,8 @@ def rope_fn(q, k, cos, sin, unsqueeze_dim: int = 1, num_warps: int = 4):
     """Same contract as HF apply_rotary_pos_emb for q [b, hq, s, d], k [b, hk, s, d], cos/sin [b, s, d]."""
     if unsqueeze_dim != 1:
         raise ValueError("rope kernel supports the [batch, heads, seq, dim] layout only (unsqueeze_dim=1)")
+    if cos.shape[0] not in (1, q.shape[0]):
+        raise ValueError(f"cos/sin batch {cos.shape[0]} cannot broadcast over q batch {q.shape[0]}")
     return _RopeFn.apply(q, k, cos, sin, num_warps)
 
 

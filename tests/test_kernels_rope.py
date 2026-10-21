@@ -36,3 +36,34 @@ def test_rope_accepts_transposed_views_like_hf_produces():
     assert (qo.float() - qr.float()).abs().max() < 2e-2
     assert (ko.float() - kr.float()).abs().max() < 2e-2
     assert qo.shape == q.shape and ko.shape == k.shape
+
+
+@cuda
+def test_rope_cos_with_batch_one_broadcasts_over_the_batch():
+    # HF builds cos/sin from position_ids of shape [1, seq] during training, so cos is [1, seq, dim]
+    from tinyforge.kernels.rope import rope_fn, rope_reference
+
+    torch.manual_seed(0)
+    b, s, d = 3, 21, 64
+    q = torch.randn(b, 4, s, d, device="cuda", requires_grad=True)
+    k = torch.randn(b, 2, s, d, device="cuda", requires_grad=True)
+    ang = torch.randn(1, s, d // 2, device="cuda")
+    cos, sin = torch.cat([ang.cos()] * 2, -1), torch.cat([ang.sin()] * 2, -1)
+    qo, ko = rope_fn(q, k, cos, sin)
+    qr, kr = rope_reference(q, k, cos, sin)
+    assert (qo - qr).abs().max() < 1e-5 and (ko - kr).abs().max() < 1e-5
+    (qo.sum() + ko.sum()).backward()
+    gq, gk = q.grad.clone(), k.grad.clone()
+    q.grad = k.grad = None
+    (qr.sum() + kr.sum()).backward()
+    assert (gq - q.grad).abs().max() < 1e-5 and (gk - k.grad).abs().max() < 1e-5
+
+
+@cuda
+def test_rope_rejects_cos_batch_that_cannot_broadcast():
+    from tinyforge.kernels.rope import rope_fn
+
+    q = torch.randn(4, 2, 5, 16, device="cuda")
+    cs = torch.randn(2, 5, 16, device="cuda")
+    with pytest.raises(ValueError):
+        rope_fn(q, q.clone(), cs, cs)
