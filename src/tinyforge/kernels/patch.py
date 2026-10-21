@@ -136,9 +136,10 @@ def _probe_logits(base: torch.nn.Module) -> torch.Tensor:
 
 
 def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = False,
-                  user_paths: list[Path] | None = None) -> KernelReport:
+                  user_paths: list[Path] | None = None, fuse: bool = False) -> KernelReport:
     """mode: off | auto (adopt only what is faster or saves memory) | force (adopt anything that verifies).
-    user_paths: files/folders of user-defined kernels to load (explicit only, see kernels/user.py)."""
+    user_paths: files/folders of user-defined kernels to load (explicit only, see kernels/user.py).
+    fuse: also look for op chains no library kernel covers and generate kernels for them (kernels/fuse.py)."""
     report = KernelReport()
     model._tinyforge_kernel_report = report
     if mode == "off":
@@ -215,6 +216,8 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
 
     if user_paths:
         _apply_user_kernels(base, user_paths, dtype, mode, report, patches)
+    if fuse:
+        _apply_fusion(base, mode, report, patches)
 
     if inference and patches.undo:
         tol = (2e-3 if dtype == torch.float32 else 6e-2) * max(1.0, ref_logits.abs().max().item())
@@ -252,6 +255,104 @@ def _apply_user_kernels(base, user_paths, dtype, mode, report: KernelReport, pat
             continue
         for m, fwd in zip(matches, forwards, strict=True):
             _wrap_forward(m, key, _user_forward(fwd), patches)
+
+
+def _is_builtin_target(m: torch.nn.Module) -> bool:
+    return _is_rmsnorm(m) or _is_swiglu_mlp(m) or _is_layer(m)
+
+
+def _capture_inputs(modules: list, run_probe: Callable[[], object]) -> dict:
+    """Run one small forward and remember the positional tensor inputs each candidate module received."""
+    seen: dict = {}
+
+    def hook(mod, args, kwargs):
+        if mod not in seen:
+            seen[mod] = (tuple(a.detach() if isinstance(a, torch.Tensor) else a for a in args), dict(kwargs))
+
+    handles = [m.register_forward_pre_hook(hook, with_kwargs=True) for m in modules]
+    try:
+        run_probe()
+    finally:
+        for h in handles:
+            h.remove()
+    return seen
+
+
+def _apply_fusion(base, mode: str, report: KernelReport, patches: _Patches) -> None:
+    """Generate, verify, tune and patch kernels for fusable op chains inside leaf modules (e.g. GPT-2's
+    NewGELUActivation). A module fx cannot trace, or whose chains fail verification or do not pay off,
+    is left alone."""
+    from .codegen import generate
+    from .fuse import find_fusable_chains
+
+    candidates = [m for m in base.modules() if not list(m.children()) and "forward" not in m.__dict__
+                  and not type(m).__module__.startswith("torch.nn") and not _is_builtin_target(m)]
+    if not candidates:
+        return
+    try:
+        seen = _capture_inputs(candidates, lambda: _probe_logits(base))
+    except Exception as e:
+        report.skipped["fuse"] = f"probe forward failed: {type(e).__name__}: {e}"[:300]
+        return
+    by_class: dict[type, list] = {}
+    for m in candidates:
+        args, kwargs = seen.get(m, (None, None))
+        if args and not kwargs and all(isinstance(a, torch.Tensor) and a.is_floating_point() for a in args):
+            by_class.setdefault(type(m), []).append(m)
+    for cls, mods in by_class.items():
+        args = seen[mods[0]][0]
+        scan = find_fusable_chains(mods[0], args)
+        if scan.skipped:
+            report.skipped[f"fuse:{cls.__name__}"] = f"could not trace: {scan.skipped}"
+            continue
+        decided = []  # one (callable | None) per chain, in graph order
+        for chain in scan.chains:
+            gen = generate(chain.nodes)
+            key = f"fused:{gen.hash}"
+            ext_shape = tuple(chain.externals[0].meta["tensor_meta"].shape)
+            rows = min(max(1, int(torch.Size(ext_shape[:-1]).numel())), 2048)
+            params = _decide(gen.spec(key), (rows, ext_shape[-1]), args[0].dtype, mode, report, key)
+            decided.append((key, gen, params))
+        if not any(p is not None for _, _, p in decided):
+            continue
+        for inst in mods:
+            _fuse_instance(inst, seen[inst][0], decided, patches)
+
+
+def _bind(kernel, params: dict):
+    def fused(*xs):
+        return kernel(*xs, **params)
+    return fused
+
+
+def _fuse_instance(inst: torch.nn.Module, args: tuple, decided: list, patches: _Patches) -> None:
+    from .fuse import find_fusable_chains
+
+    scan = find_fusable_chains(inst, args)
+    if len(scan.chains) != len(decided) or scan.gm is None:
+        return
+    graph, keys = scan.gm.graph, []
+    for chain, (key, gen, params) in zip(scan.chains, decided, strict=True):
+        if params is None:
+            continue
+
+        with graph.inserting_after(chain.output):
+            call = graph.call_function(_bind(gen.kernel, params), tuple(chain.externals))
+        chain.output.replace_all_uses_with(call)
+        call.args = tuple(chain.externals)  # replace_all_uses_with must not have rewired the new node
+        for n in reversed(chain.members):
+            graph.erase_node(n)
+        keys.append(key)
+    scan.gm.recompile()
+    gm = scan.gm
+
+    def new(*a, **k):
+        if not all(isinstance(x, torch.Tensor) and x.is_cuda and x.is_floating_point() for x in a):
+            return _FALLBACK
+        return gm(*a, **k)
+
+    for key in keys:
+        _wrap_forward(inst, key, new, patches)
 
 
 def _user_forward(fwd):
