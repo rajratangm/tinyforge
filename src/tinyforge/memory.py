@@ -20,8 +20,13 @@ def _chunk_ce_sum(hidden: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor
 
 
 def chunked_ce_loss(hidden: torch.Tensor, lm_head: torch.nn.Module, labels: torch.Tensor,
-                    chunk: int = 2048, ignore_index: int = -100) -> torch.Tensor:
-    """Mean next-token cross-entropy. hidden: [B,T,H]; labels: [B,T] (unshifted, HF convention)."""
+                    chunk: int = 2048, ignore_index: int = -100, fused: bool = False) -> torch.Tensor:
+    """Mean next-token cross-entropy. hidden: [B,T,H]; labels: [B,T] (unshifted, HF convention).
+    fused=True runs each chunk through the Triton kernel in tinyforge.kernels.ce (CUDA only)."""
+    if fused:
+        from .kernels.ce import fused_ce_chunk_sum as chunk_fn
+    else:
+        chunk_fn = _chunk_ce_sum
     h = hidden[:, :-1, :]
     y = labels[:, 1:]
     keep = y != ignore_index
@@ -34,9 +39,9 @@ def chunked_ce_loss(hidden: torch.Tensor, lm_head: torch.nn.Module, labels: torc
     for i in range(0, n, chunk):
         hc, yc = h[i:i + chunk], y[i:i + chunk]
         if torch.is_grad_enabled() and hc.requires_grad:
-            total = total + checkpoint(_chunk_ce_sum, hc, weight, bias, yc, use_reentrant=False)
+            total = total + checkpoint(chunk_fn, hc, weight, bias, yc, use_reentrant=False)
         else:
-            total = total + _chunk_ce_sum(hc, weight, bias, yc)
+            total = total + chunk_fn(hc, weight, bias, yc)
     return total / n
 
 
