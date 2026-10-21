@@ -1,4 +1,4 @@
-"""Fused silu(gate) * up with a backward pass that recomputes silu, so no intermediate is kept for autograd."""
+"""Fused silu(gate) * up; backward recomputes silu so autograd keeps no intermediate."""
 
 from __future__ import annotations
 
