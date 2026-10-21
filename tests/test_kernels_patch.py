@@ -172,3 +172,23 @@ def test_no_kernel_silently_falls_back_during_a_real_forward_and_backward(infere
         m(x).logits.float().sum().backward()
     assert expected <= set(r.patched), f"a kernel fell back at runtime: {r.skipped}"
     assert r.skipped == {}
+
+
+@cuda
+def test_gradient_checkpointing_neither_trips_the_fallback_nor_changes_gradients():
+    """Non-reentrant checkpoint recompute stops early by raising a control-flow exception through every
+    patched forward; that must propagate untouched, and the gradients must equal the unpatched ones."""
+    def build():
+        m = tiny(torch.float32, "cuda")
+        m.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        m.enable_input_require_grads()
+        return m.train()
+
+    ref, m = build(), build()
+    r = apply_kernels(m, mode="force")
+    x = ids("cuda")
+    ref(x).logits.sum().backward()
+    m(x).logits.sum().backward()
+    assert {"rmsnorm", "swiglu", "rope"} <= set(r.patched) and r.skipped == {}, r
+    g_ref, g = ref.model.embed_tokens.weight.grad, m.model.embed_tokens.weight.grad
+    assert (g_ref - g).abs().max() < 1e-3 * max(1.0, g_ref.abs().max().item())

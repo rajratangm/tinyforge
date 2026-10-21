@@ -71,3 +71,16 @@ def test_verify_cli_exit_code_zero_when_all_match(toy_specs):
     args = ["kernels", "verify", "--only", "toy_ok", "--device", "cpu", "--dtype", "fp32"]
     r = CliRunner().invoke(app, args)
     assert r.exit_code == 0, r.output
+
+
+def test_failed_bench_does_not_leave_a_stale_result_file(tmp_path, monkeypatch):
+    out = tmp_path / "result.json"
+    out.write_text('{"speedup": 99}', encoding="utf-8")
+
+    def boom(*a, **k):
+        raise RuntimeError("training crashed")
+
+    monkeypatch.setattr(bench, "bench_model", boom)
+    r = CliRunner().invoke(app, ["kernels", "bench", "--out", str(out)])
+    assert r.exit_code != 0
+    assert not out.exists()

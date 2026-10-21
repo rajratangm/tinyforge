@@ -55,6 +55,12 @@ class _Patches:
             self.restore(kernel, why)
 
 
+def _is_torch_control_flow(e: BaseException) -> bool:
+    """Non-reentrant activation checkpointing stops its recompute early by raising an exception through the
+    forward being recomputed. That is not a kernel failure and must reach torch untouched."""
+    return type(e).__module__.startswith("torch.utils.checkpoint")
+
+
 def _wrap_forward(module: torch.nn.Module, kernel: str, new: Callable, patches: _Patches) -> None:
     orig = module.forward
     had_instance_forward = "forward" in module.__dict__
@@ -65,6 +71,8 @@ def _wrap_forward(module: torch.nn.Module, kernel: str, new: Callable, patches: 
         try:
             out = new(*args, **kwargs)
         except Exception as e:
+            if _is_torch_control_flow(e):
+                raise
             patches.restore(kernel, f"{type(e).__name__}: {e}"[:300])
             return orig(*args, **kwargs)
         return orig(*args, **kwargs) if out is _FALLBACK else out
@@ -219,6 +227,8 @@ def _patch_rope_global(mod, params: dict, rope_mod, patches: _Patches) -> None:
         try:
             return rope_mod.rope_fn(q, k, cos, sin, 1, params["num_warps"])
         except Exception as e:
+            if _is_torch_control_flow(e):
+                raise
             patches.restore("rope", f"{type(e).__name__}: {e}"[:300])
             return orig(q, k, cos, sin, unsqueeze_dim)
 

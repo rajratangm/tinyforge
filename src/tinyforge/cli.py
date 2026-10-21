@@ -461,6 +461,7 @@ def kernels_bench(
     """Train one short run with kernels off and one on; report tokens/s, peak VRAM and loss agreement."""
     from .kernels import bench
 
+    out.unlink(missing_ok=True)  # a crashed run must never leave an older run's numbers behind
     r = bench.bench_model(model, steps, quant, data_dir, max_len=max_len)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(r, indent=2), encoding="utf-8")
