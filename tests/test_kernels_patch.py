@@ -63,7 +63,8 @@ def test_patched_model_outputs_and_grads_match(dtype):
     lo_ref.sum().backward()
     lo.sum().backward()
     g_ref, g = ref.model.embed_tokens.weight.grad.float(), m.model.embed_tokens.weight.grad.float()
-    assert (g_ref - g).abs().max() < tol * 10
+    g_tol = (1e-3 if dtype == torch.float32 else 5e-2) * max(1.0, g_ref.abs().max().item())  # relative to grad size
+    assert (g_ref - g).abs().max() < g_tol
 
 
 @cuda
@@ -152,3 +153,21 @@ def test_describe_matches_works_on_meta_models():
     with torch.device("meta"):
         m = Qwen2ForCausalLM(tiny_cfg())
     assert describe_matches(m)["rmsnorm"] == 5
+
+
+@cuda
+@pytest.mark.parametrize("inference", [False, True])
+def test_no_kernel_silently_falls_back_during_a_real_forward_and_backward(inference):
+    """A fallback keeps results right but hides a broken kernel; every patched kernel must really run."""
+    m = tiny(torch.bfloat16, "cuda")
+    r = apply_kernels(m, mode="force", inference=inference)
+    expected = {"rmsnorm", "swiglu", "rope"} | ({"add_rmsnorm"} if inference else set())
+    assert expected <= set(r.patched), r
+    x = ids("cuda")
+    if inference:
+        with torch.no_grad():
+            m.eval()(x)
+    else:
+        m(x).logits.float().sum().backward()
+    assert expected <= set(r.patched), f"a kernel fell back at runtime: {r.skipped}"
+    assert r.skipped == {}

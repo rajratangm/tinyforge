@@ -169,7 +169,7 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
     mlps = [m for m in base.modules() if _is_swiglu_mlp(m)]
     params = _decide("swiglu", (2048, cfg.intermediate_size), dtype, mode, report) if mlps else None
     if params is not None:
-        def mlp_forward(m):
+        def mlp_forward(m, params):
             def new(x):
                 gate, up = m.gate_proj(x), m.up_proj(x)
                 if not (gate.is_cuda and gate.dtype == up.dtype and gate.shape == up.shape):
@@ -177,7 +177,7 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
                 return m.down_proj(swiglu.swiglu_fn(gate, up, params["BLOCK"], params["num_warps"]))
             return new
         for m in mlps:
-            _wrap_forward(m, "swiglu", mlp_forward(m), patches)
+            _wrap_forward(m, "swiglu", mlp_forward(m, params), patches)
 
     heads = cfg.num_attention_heads
     head_dim = getattr(cfg, "head_dim", None) or cfg.hidden_size // heads
