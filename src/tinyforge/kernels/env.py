@@ -43,7 +43,7 @@ def triton_status() -> KernelEnv:
         import triton
 
         gpu = torch.cuda.get_device_name(0)
-        cc = "%d.%d" % torch.cuda.get_device_capability(0)
+        cc = ".".join(map(str, torch.cuda.get_device_capability(0)))
         try:
             _smoke()
         except Exception as e:
