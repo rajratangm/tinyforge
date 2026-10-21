@@ -1,0 +1,33 @@
+{
+  "model": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "steps": 30,
+  "quant": "none",
+  "off": {
+    "tok_per_s": 1406.213460203233,
+    "peak_mem_gb": 2.1881213188171387,
+    "final_loss": 1.3913215398788452
+  },
+  "auto": {
+    "tok_per_s": 1610.5772512098918,
+    "peak_mem_gb": 1.3449616432189941,
+    "final_loss": 1.3913178443908691
+  },
+  "loss_close": true,
+  "speedup": 1.1453291387049611,
+  "vram_saved_gb": 0.8431596755981445,
+  "kernel_report": {
+    "patched": [
+      "rmsnorm",
+      "swiglu",
+      "rope",
+      "fused_ce"
+    ],
+    "skipped": {},
+    "speedups": {
+      "rmsnorm": 2.666,
+      "swiglu": 1.262,
+      "rope": 1.864,
+      "fused_ce": 1.459
+    }
+  }
+}
