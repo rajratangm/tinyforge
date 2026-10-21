@@ -407,7 +407,8 @@ def ft_generate(req: FTGenRequest):
                 from .kernels.patch import apply_kernels
                 from .kernels.user import kernel_search_path
 
-                apply_kernels(peft_model, mode, inference=True, user_paths=kernel_search_path(None))
+                apply_kernels(peft_model, mode, inference=True, user_paths=kernel_search_path(None),
+                              fuse=os.environ.get("TINYFORGE_FUSE") == "1")
             _ft_models["m"] = (
                 peft_model,
                 load_tokenizer(cfg.base_model),

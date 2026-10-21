@@ -160,3 +160,16 @@ def test_kbit_style_model_with_fp32_norms_trains_with_kernels(use_checkpointing)
     assert torch.isfinite(loss) and report.skipped.keys() <= {"rmsnorm"}, report
     lora_grads = [p.grad for n, p in m.named_parameters() if "lora_B" in n and p.grad is not None]
     assert lora_grads and any(g.abs().max() > 0 for g in lora_grads)
+
+
+@pytest.mark.parametrize("args", [["ft", "train", "--help"], ["ft", "generate", "--help"],
+                                  ["ft", "pipeline", "--help"], ["serve", "--help"],
+                                  ["kernels", "fuse", "--help"]])
+def test_cli_exposes_the_fuse_option(args):
+    assert "--fuse" in CliRunner().invoke(app, args).output or args[:2] == ["kernels", "fuse"]
+    if args[:2] == ["kernels", "fuse"]:
+        assert "--model" in CliRunner().invoke(app, args).output
+
+
+def test_ftconfig_fuse_defaults_off(tmp_path):
+    assert _cfg(tmp_path).fuse is False and _cfg(tmp_path, fuse=True).fuse is True

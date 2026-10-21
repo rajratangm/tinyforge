@@ -482,6 +482,32 @@ def kernels_new(
     console.print("It runs only if it matches PyTorch (outputs and gradients) and is faster or saves memory.")
 
 
+@kernels_app.command("fuse")
+def kernels_fuse(
+    model: Annotated[str, typer.Option(help="Hugging Face model id to scan and patch (loaded on the GPU).")],
+    mode: Annotated[str, typer.Option(help="auto | force")] = "auto",
+) -> None:
+    """Load a model, look for op chains no library kernel covers, and show which fused kernels get used."""
+    import torch
+
+    from .finetune import load_base
+    from .kernels.patch import apply_kernels
+
+    if mode not in ("auto", "force"):
+        raise typer.BadParameter("must be auto or force", param_hint="--mode")
+    if not torch.cuda.is_available():
+        console.print("[yellow]No CUDA GPU: fusion needs one.[/]")
+        raise typer.Exit(1)
+    net = load_base(model, "none", torch.cuda.is_bf16_supported(), "cuda").eval()
+    rep = apply_kernels(net, mode, fuse=True)
+    fused = [k for k in rep.patched if k.startswith("fused:")]
+    console.print(f"patched: {rep.patched or 'none'}")
+    console.print(f"fused kernels adopted: {fused or 'none'}")
+    for k, why in rep.skipped.items():
+        console.print(f"skipped {escape(k)}: {escape(why)}")
+    console.print(f"measured speed-ups: {rep.speedups}")
+
+
 @kernels_app.command("bench")
 def kernels_bench(
     model: Annotated[str, typer.Option(help="Hugging Face model id to train.")] =
@@ -506,6 +532,8 @@ app.add_typer(ft_app, name="ft")
 BaseOpt = Annotated[str, typer.Option(help="Hugging Face model id.")]
 KernelsOpt = Annotated[str, typer.Option(help="Verified Triton kernels: off | auto | force.",
                                          callback=lambda v: _check_kernels(v))]
+FuseOpt = Annotated[bool, typer.Option(
+    "--fuse", help="Also generate kernels for op chains the library lacks (needs --kernels auto|force).")]
 KernelPathOpt = Annotated[Path | None, typer.Option(
     "--kernel-path", help="Your own kernel file or folder (see `tinyforge kernels new`). Explicit only: "
     "nothing is loaded from the current directory. TINYFORGE_KERNEL_PATH works too.")]
@@ -567,7 +595,7 @@ def ft_train(
     gpus: Annotated[int, typer.Option(help="GPUs for data-parallel training.")] = 1,
     split_batch: Annotated[bool, typer.Option(help="With --gpus N: split one batch across GPUs instead of "
                                               "giving each GPU a full batch.")] = False,
-    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None,
+    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None, fuse: FuseOpt = False,
     as_json: JsonOpt = False,
 ) -> None:
     """LoRA fine-tune (resumes from run_dir/last.pt). Best adapter saved to run_dir/best."""
@@ -576,7 +604,7 @@ def ft_train(
     c = _ft_cfg(base_model, run_dir, data_dir, max_steps=steps, max_len=max_len, batch_size=batch_size,
                 grad_accum=grad_accum, lr=lr, lora_r=lora_r, lora_alpha=2 * lora_r, quant=quant,
                 split_batch=split_batch, kernels=kernels, kernel_path=kernel_path,
-                eval_interval=max(1, min(50, steps // 4)),
+                fuse=fuse, eval_interval=max(1, min(50, steps // 4)),
                 warmup_steps=min(20, max(1, steps // 10)))
 
     def on_event(e: dict) -> None:
@@ -669,6 +697,7 @@ def ft_card(run_dir: Path = Path("runs/ft"), out: Path | None = None) -> None:
 def ft_generate(
     prompt: Annotated[str, typer.Argument()], run_dir: Path = Path("runs/ft"),
     max_new: int = 200, base: bool = False, kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None,
+    fuse: FuseOpt = False,
 ) -> None:
     """Chat with the tuned model (or --base for the original)."""
     from peft import PeftModel
@@ -685,7 +714,8 @@ def ft_generate(
         from .kernels.patch import apply_kernels
         from .kernels.user import kernel_search_path
 
-        rep = apply_kernels(model, kernels, inference=True, user_paths=kernel_search_path(kernel_path))
+        rep = apply_kernels(model, kernels, inference=True, user_paths=kernel_search_path(kernel_path),
+                            fuse=fuse)
         console.print(f"kernels: patched {rep.patched or 'none'}; skipped {rep.skipped or 'none'}")
     tok = load_tokenizer(cfg.base_model)
     if base:
@@ -699,7 +729,7 @@ def ft_generate(
 def ft_pipeline(
     base_model: BaseOpt = "HuggingFaceTB/SmolLM2-360M-Instruct", steps: int = 300,
     source: str = "yahma/alpaca-cleaned", limit: int = 3000, workdir: Path = Path("."),
-    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None,
+    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None, fuse: FuseOpt = False,
 ) -> None:
     """End to end: doctor -> data -> plan -> train -> eval/merge. Exit 1 if any gate fails."""
     import subprocess
@@ -714,7 +744,8 @@ def ft_pipeline(
         ("plan", base + ["ft", "plan", "--base-model", base_model]),
         ("train", base + ["ft", "train", "--base-model", base_model, "--steps", str(steps),
                           "--data-dir", d, "--run-dir", r, "--kernels", kernels]
-                         + (["--kernel-path", str(kernel_path)] if kernel_path else [])),
+                         + (["--kernel-path", str(kernel_path)] if kernel_path else [])
+                         + (["--fuse"] if fuse else [])),
         ("eval", base + ["ft", "eval", "--run-dir", r]),
     ]
     for name, cmd in stages:
@@ -990,7 +1021,7 @@ def serve(
     engine: Annotated[str, typer.Option(help="hf (in-process) | llamacpp (GGUF via llama-server)")] = "",
     gguf: Annotated[Path | None, typer.Option(help="Base GGUF for --engine llamacpp.")] = None,
     lora_gguf: Annotated[Path | None, typer.Option(help="LoRA adapter GGUF for --engine llamacpp.")] = None,
-    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None,
+    kernels: KernelsOpt = "off", kernel_path: KernelPathOpt = None, fuse: FuseOpt = False,
 ) -> None:
     """Start the API + web UI.
 
@@ -1017,6 +1048,7 @@ def serve(
     if lora_gguf:
         os.environ["TINYFORGE_LORA_GGUF"] = str(lora_gguf)
     os.environ["TINYFORGE_KERNELS"] = kernels
+    os.environ["TINYFORGE_FUSE"] = "1" if fuse else "0"
     if kernel_path:
         os.environ["TINYFORGE_KERNEL_PATH"] = str(kernel_path)
     uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
