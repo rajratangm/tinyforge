@@ -264,3 +264,22 @@
 - Spec coverage: registry (T2), verifier (T3), autotune+cache (T4), patcher+fallback (T10), fx fusion (T13-15), phase 1 kernels (T5-9), CLI surface (T1, T10, T12, T15), JobSpec/`--kernels` (T11), error handling incl. drift guard (T10-11), acceptance (T1, T12, T15). Phase 3 (attention, quantised matmul) is intentionally absent.
 - Known unknowns: Task 1 may fail on this GPU; Task 11 depends on the existing finetune test fixtures and on the shared schema (Go side); Task 8 ties into memory.py's existing API.
 - Proportion: plan is about 2x the spec, mostly signatures, tests and checks; kernel bodies are left to the implementer.
+
+### Task 16 (added at the user's request; run after Task 12): User-defined kernels
+
+Spec section 6b.
+
+**Files:**
+- Create: `src/tinyforge/kernels/user.py`, `examples/kernels/gelu_mul.py`, `tests/test_kernels_user.py`
+- Modify: `src/tinyforge/kernels/registry.py` (`Target` dataclass), `src/tinyforge/kernels/patch.py` (apply user targets), `src/tinyforge/cli.py` (`kernels new`, `--file` on `kernels verify|bench`, `--kernel-path`), `docs/kernels.md`
+
+**Interfaces:**
+- Consumes: `KernelSpec`, `verify`, `tune`, `_wrap_forward`, `apply_kernels` (Tasks 2-4, 10).
+- Produces: `@dataclass Target(match: Callable[[nn.Module], bool], shape_for: Callable[[nn.Module], tuple[int, ...]], make_forward: Callable[[nn.Module, dict], Callable])`; `KernelSpec.target: Target | None = None`; `load_user_kernels(paths: list[Path]) -> tuple[list[KernelSpec], dict[str, str]]` (specs found, and `{file: error}` for files that failed to import; never raises); `kernel_search_path(cli_value: Path | None) -> list[Path]` (CLI value, then `TINYFORGE_KERNEL_PATH` split on `os.pathsep`, then `./tinyforge_kernels` if it exists); `scaffold(name: str, out_dir: Path) -> Path`; `apply_kernels(..., user_paths: list[Path] | None = None)` where user targets go through the same `tune` + `_wrap_forward` path and appear in the report under `user:<name>`.
+
+- [ ] **Step 1: Write failing tests** in `tests/test_kernels_user.py`: `test_load_registers_spec_from_file` (tmp file defining `SPEC` with CPU toy kernel; assert returned and not leaked into the global registry on repeat loads); `test_broken_file_is_reported_not_raised` (syntax error file gives `{file: msg}`, other files still load); `test_scaffold_writes_a_loadable_file_that_passes_verify` (scaffold, load, `verify(...).ok`, CPU device); `test_cli_verify_file_exits_nonzero_for_wrong_kernel` (file with `x*2.1`, `CliRunner` exit code 1 and output contains `verified on`); `test_user_kernel_is_not_loaded_unless_a_path_is_given` (monkeypatch cwd with a `tinyforge_kernels/` dir holding a file that writes a marker; `apply_kernels(model, "off")` and a JobSpec-driven `to_ft_config` leave the marker unwritten); CUDA-gated `test_user_target_is_patched_and_matches` (toy `nn.Module` named `GeluMul` in a tiny model, user kernel from `examples/kernels/gelu_mul.py`, assert `user:gelu_mul` in `report.patched` and outputs match) and `test_user_kernel_runtime_failure_falls_back` (kernel raises on call; model output still equals the original and the reason is in `report.skipped`).
+- [ ] **Step 2: Run** `.venv\Scripts\python -m pytest tests/test_kernels_user.py -q --no-cov`; expect FAIL (module missing).
+- [ ] **Step 3: Implement** `Target`, `load_user_kernels` (import each `*.py` with `importlib.util.spec_from_file_location` under a unique module name, read module-level `SPEC`, catch every exception per file), `kernel_search_path`, `scaffold` (template is `examples/kernels/gelu_mul.py` copied with the name replaced), and the patcher branch for user targets; wire the CLI.
+- [ ] **Step 4: Run** the new tests plus `tests/test_kernels_patch.py`; expect PASS.
+- [ ] **Step 5: Document** in `docs/kernels.md`: the file format, the template, the safety note (your own code, loaded only from paths you give), and what "verified on" does and does not mean.
+- [ ] **Step 6: Commit** `feat(kernels): user-defined kernels with the same verify/tune/fallback gate`.

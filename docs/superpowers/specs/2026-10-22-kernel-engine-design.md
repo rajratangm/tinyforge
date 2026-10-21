@@ -90,6 +90,26 @@ data-dependent control flow, matmul, anything the op table does not list (those 
   `kernels: auto|off`). Default `auto` only after phase 1 passes acceptance; until then default `off`.
 - Every run records a kernel report (patched/skipped/why, speedups) in its run directory and the telemetry.
 
+## 6b. User-defined kernels (added 2026-10-22 at the user's request)
+
+Users can write their own Triton kernel and have tinyforge verify, tune and use it through the same gate as the
+built-in ones. A user kernel is a Python file that defines a `KernelSpec` (reference, kernel, tunables,
+`make_inputs`, as in section 4.1) plus an optional `Target` that tells the patcher which modules it replaces:
+`match(module) -> bool`, `shape_for(module) -> tuple[int, ...]` (what to tune on) and
+`make_forward(module, params) -> Callable` (the replacement forward).
+
+- `tinyforge kernels new NAME` writes a runnable template (a working example with reference, Triton kernel,
+  `make_inputs` and a target) into `./tinyforge_kernels/NAME.py`.
+- `tinyforge kernels verify --file F` and `kernels bench --file F` run the section 4.2/4.3 gate on the file's
+  spec and exit non-zero if it fails verification.
+- Loading is explicit only: files are read from `--kernel-path` / `TINYFORGE_KERNEL_PATH` / `./tinyforge_kernels/`
+  when `--kernels` is not `off`. A JobSpec or any network input never causes code to be loaded. User kernels are
+  the user's own code running with their privileges; the docs say so.
+- A user kernel that fails to import, fails verification, is slower (in `auto`), or raises at runtime is skipped
+  with its reason in the kernel report and the run continues on PyTorch.
+- Verification only covers the shapes and dtypes the kernel's `make_inputs` is run with, so the report says
+  "verified on: ..." and never claims general correctness.
+
 ## 7. Error handling
 
 - Triton or CUDA missing/unusable: `kernels doctor` says why; runs proceed with PyTorch (existing HW006 style
