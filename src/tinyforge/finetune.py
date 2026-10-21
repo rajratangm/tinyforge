@@ -13,6 +13,7 @@ import random
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import torch
 from pydantic import BaseModel
@@ -54,6 +55,7 @@ class FTConfig(BaseModel):
     auto_plan: bool = True  # False: use batch/quant/checkpointing exactly as given (benchmarks, expert use)
     chunked_ce: bool = True  # project only labelled positions through the LM head, in chunks (see memory.py)
     ce_chunk: int = 2048
+    kernels: Literal["off", "auto", "force"] = "off"  # verified Triton kernels, see kernels/
     eval_interval: int = 50
     eval_examples: int = 64
     seed: int = 1337
@@ -377,6 +379,20 @@ def _is_mem_error(exc: BaseException) -> bool:
             or "CUBLAS_STATUS_INTERNAL_ERROR" in s or "CUBLAS_STATUS_ALLOC_FAILED" in s)
 
 
+def _enable_kernels(model, c: FTConfig, device: str, event) -> bool | dict:
+    """Patch verified Triton kernels into the model. Returns the `fused` argument for causal_lm_loss:
+    False (PyTorch cross-entropy) or the tuned parameters of the fused kernel."""
+    if c.kernels == "off" or device != "cuda":
+        return False
+    from .kernels.patch import apply_kernels, decide_fused_ce
+
+    report = apply_kernels(model, c.kernels)
+    fused = decide_fused_ce(model, c.kernels, report) if c.chunked_ce else None
+    (c.run_dir / "kernel_report.json").write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    event("kernels", **report.as_dict())
+    return fused or False
+
+
 def _lr(step: int, c: FTConfig) -> float:
     if step < c.warmup_steps:
         return c.lr * (step + 1) / c.warmup_steps
@@ -439,6 +455,25 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
     model = get_peft_model(model, LoraConfig(
         r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=c.lora_dropout,
         target_modules="all-linear", task_type="CAUSAL_LM"))
+    fused = _enable_kernels(model, c, device, event)
+    if getattr(model, "_tinyforge_patches", None) is not None:
+        from .kernels.patch import kernels_agree, restore_kernels
+
+        probe = tr.collate(list(range(min(len(tr), max(1, c.batch_size)))), device)
+
+        def probe_loss(use_kernels: bool):
+            with torch.autocast(device, dtype=amp, enabled=amp is not None):
+                if not c.chunked_ce:
+                    return model(**probe).loss
+                return causal_lm_loss(model, probe, c.ce_chunk, fused=fused if use_kernels else False)
+
+        if not kernels_agree(model, probe_loss):  # verified in isolation, yet disagrees inside the model
+            restore_kernels(model)
+            fused = False
+            event("diagnostic", code="FT011", level="warn",
+                  message="Triton kernels changed the loss on the first batch by more than 2%, so they were "
+                          "switched off for this run. Training continues on plain PyTorch ops.",
+                  fix="Run `tinyforge kernels verify --model <name>`, and report the failing kernel.")
     trainable = [p for p in model.parameters() if p.requires_grad]
     if world > 1:  # the same seed already gives the same init; broadcasting makes it certain
         import torch.distributed as dist
@@ -511,7 +546,8 @@ def train(c: FTConfig, on_event: Callable[[dict], None] | None = None) -> dict:
                 b = tr.collate(idx, device)
                 w = len(idx) / eps
                 with torch.autocast(device, dtype=amp, enabled=amp is not None):
-                    loss = causal_lm_loss(model, b, c.ce_chunk) if c.chunked_ce else model(**b).loss
+                    loss = (causal_lm_loss(model, b, c.ce_chunk, fused=fused) if c.chunked_ce
+                            else model(**b).loss)
                 scaler.scale(loss * w).backward()
                 loss_acc += loss.item() * w
                 tok_count += int(b["attention_mask"].sum().item())

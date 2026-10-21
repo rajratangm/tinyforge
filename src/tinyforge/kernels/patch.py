@@ -35,6 +35,7 @@ class _Patches:
     def __init__(self, report: KernelReport):
         self.report = report
         self.undo: dict[str, list[Callable[[], None]]] = {}
+        self.enabled = True  # False: every patched forward passes straight through to the original
 
     def add(self, kernel: str, undo: Callable[[], None]) -> None:
         self.undo.setdefault(kernel, []).append(undo)
@@ -59,6 +60,8 @@ def _wrap_forward(module: torch.nn.Module, kernel: str, new: Callable, patches: 
     had_instance_forward = "forward" in module.__dict__
 
     def wrapped(*args, **kwargs):
+        if not patches.enabled:
+            return orig(*args, **kwargs)
         try:
             out = new(*args, **kwargs)
         except Exception as e:
@@ -210,7 +213,7 @@ def _patch_rope_global(mod, params: dict, rope_mod, patches: _Patches) -> None:
     orig = mod.apply_rotary_pos_emb
 
     def new(q, k, cos, sin, unsqueeze_dim=1):
-        if (unsqueeze_dim != 1 or q.dim() != 4 or not q.is_cuda
+        if (not patches.enabled or unsqueeze_dim != 1 or q.dim() != 4 or not q.is_cuda
                 or not (q.dtype == k.dtype == cos.dtype == sin.dtype)):
             return orig(q, k, cos, sin, unsqueeze_dim)
         try:
@@ -256,3 +259,46 @@ def describe_matches(model: torch.nn.Module) -> dict[str, int]:
                  and hasattr(sys.modules.get(type(m).__module__), "apply_rotary_pos_emb")}
     return {"rmsnorm": sum(_is_rmsnorm(m) for m in mods), "swiglu": sum(_is_swiglu_mlp(m) for m in mods),
             "rope": len(rope_mods), "add_rmsnorm": sum(_is_layer(m) for m in mods)}
+
+
+def kernels_agree(model: torch.nn.Module, loss_fn: Callable[[bool], torch.Tensor], tol: float = 0.02) -> bool:
+    """Drift guard: the loss with kernels must match the loss without them (relative `tol`).
+    loss_fn(use_kernels) computes one loss; the patched forwards are bypassed while it runs with False."""
+    patches = getattr(model, "_tinyforge_patches", None)
+    if patches is None or not patches.undo:
+        return True
+    with torch.no_grad():
+        with_kernels = float(loss_fn(True))
+        patches.enabled = False
+        try:
+            reference = float(loss_fn(False))
+        finally:
+            patches.enabled = True
+    return abs(with_kernels - reference) <= tol * max(1.0, abs(reference))
+
+
+def decide_fused_ce(model: torch.nn.Module, mode: str, report: KernelReport) -> dict | None:
+    """Tune the fused cross-entropy for this model's LM head; None keeps the PyTorch chunked path.
+    It switches the loss function rather than patching a module, so there is nothing to undo."""
+    if mode == "off":
+        return None
+    if not triton_status().ok:
+        report.skipped["fused_ce"] = "Triton is not usable here"
+        return None
+    base = model.get_base_model() if hasattr(model, "get_base_model") else model
+    head = base.get_output_embeddings()
+    if head is None or not head.weight.is_floating_point() or not head.weight.is_cuda:
+        report.skipped["fused_ce"] = "LM head is quantised or not on a CUDA device"
+        return None
+    from . import ce  # noqa: F401  (import registers the spec)
+
+    # a proxy width keeps tuning inside a 4 GB card; vocab is the dimension the kernel loops over
+    params = _decide("fused_ce", (256, min(base.config.hidden_size, 512), base.config.vocab_size),
+                     head.weight.dtype, mode, report)
+    if params is not None:
+        patches = getattr(model, "_tinyforge_patches", None)
+        if patches is not None:
+            patches.add("fused_ce", lambda: None)
+        elif "fused_ce" not in report.patched:
+            report.patched.append("fused_ce")
+    return params

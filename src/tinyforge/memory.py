@@ -20,11 +20,16 @@ def _chunk_ce_sum(hidden: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor
 
 
 def chunked_ce_loss(hidden: torch.Tensor, lm_head: torch.nn.Module, labels: torch.Tensor,
-                    chunk: int = 2048, ignore_index: int = -100, fused: bool = False) -> torch.Tensor:
+                    chunk: int = 2048, ignore_index: int = -100, fused: bool | dict = False) -> torch.Tensor:
     """Mean next-token cross-entropy. hidden: [B,T,H]; labels: [B,T] (unshifted, HF convention).
-    fused=True runs each chunk through the Triton kernel in tinyforge.kernels.ce (CUDA only)."""
+    fused runs each chunk through the Triton kernel in tinyforge.kernels.ce (CUDA only); a dict
+    carries its tuned parameters (BLOCK, num_warps)."""
     if fused:
-        from .kernels.ce import fused_ce_chunk_sum as chunk_fn
+        from functools import partial
+
+        from .kernels.ce import fused_ce_chunk_sum
+
+        chunk_fn = partial(fused_ce_chunk_sum, **fused) if isinstance(fused, dict) else fused_ce_chunk_sum
     else:
         chunk_fn = _chunk_ce_sum
     h = hidden[:, :-1, :]
@@ -45,9 +50,10 @@ def chunked_ce_loss(hidden: torch.Tensor, lm_head: torch.nn.Module, labels: torc
     return total / n
 
 
-def causal_lm_loss(model, batch: dict, chunk: int = 2048) -> torch.Tensor:
+def causal_lm_loss(model, batch: dict, chunk: int = 2048, fused: bool | dict = False) -> torch.Tensor:
     """Loss for a (PEFT-wrapped) HF causal LM via the chunked path. Works for any model exposing
     get_decoder() and get_output_embeddings() (the HF contract: Llama, Qwen, Mistral, Gemma, Phi ...)."""
     base = model.get_base_model() if hasattr(model, "get_base_model") else model
     out = base.get_decoder()(input_ids=batch["input_ids"], attention_mask=batch.get("attention_mask"))
-    return chunked_ce_loss(out.last_hidden_state, base.get_output_embeddings(), batch["labels"], chunk)
+    return chunked_ce_loss(out.last_hidden_state, base.get_output_embeddings(), batch["labels"], chunk,
+                           fused=fused)

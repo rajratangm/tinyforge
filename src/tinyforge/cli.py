@@ -423,6 +423,14 @@ def kernels_doctor(as_json: JsonOpt = False) -> None:
 ft_app = typer.Typer(help="Fine-tune pretrained models with LoRA/QLoRA.")
 app.add_typer(ft_app, name="ft")
 BaseOpt = Annotated[str, typer.Option(help="Hugging Face model id.")]
+KernelsOpt = Annotated[str, typer.Option(help="Verified Triton kernels: off | auto | force.",
+                                         callback=lambda v: _check_kernels(v))]
+
+
+def _check_kernels(v: str) -> str:
+    if v not in ("off", "auto", "force"):
+        raise typer.BadParameter("must be off, auto or force")
+    return v
 
 
 def _ft_cfg(base_model: str, run_dir: Path, data_dir: Path, **kw):
@@ -475,6 +483,7 @@ def ft_train(
     gpus: Annotated[int, typer.Option(help="GPUs for data-parallel training.")] = 1,
     split_batch: Annotated[bool, typer.Option(help="With --gpus N: split one batch across GPUs instead of "
                                               "giving each GPU a full batch.")] = False,
+    kernels: KernelsOpt = "off",
     as_json: JsonOpt = False,
 ) -> None:
     """LoRA fine-tune (resumes from run_dir/last.pt). Best adapter saved to run_dir/best."""
@@ -482,7 +491,7 @@ def ft_train(
 
     c = _ft_cfg(base_model, run_dir, data_dir, max_steps=steps, max_len=max_len, batch_size=batch_size,
                 grad_accum=grad_accum, lr=lr, lora_r=lora_r, lora_alpha=2 * lora_r, quant=quant,
-                split_batch=split_batch, eval_interval=max(1, min(50, steps // 4)),
+                split_batch=split_batch, kernels=kernels, eval_interval=max(1, min(50, steps // 4)),
                 warmup_steps=min(20, max(1, steps // 10)))
 
     def on_event(e: dict) -> None:
@@ -574,7 +583,7 @@ def ft_card(run_dir: Path = Path("runs/ft"), out: Path | None = None) -> None:
 @ft_app.command("generate")
 def ft_generate(
     prompt: Annotated[str, typer.Argument()], run_dir: Path = Path("runs/ft"),
-    max_new: int = 200, base: bool = False,
+    max_new: int = 200, base: bool = False, kernels: KernelsOpt = "off",
 ) -> None:
     """Chat with the tuned model (or --base for the original)."""
     from peft import PeftModel
@@ -587,6 +596,11 @@ def ft_generate(
     hw = hardware.probe()
     model = load_base(cfg.base_model, cfg.quant, hw.bf16_supported, hw.device)
     model = PeftModel.from_pretrained(model, run_dir / "best")
+    if kernels != "off" and hw.device == "cuda":
+        from .kernels.patch import apply_kernels
+
+        rep = apply_kernels(model, kernels, inference=True)
+        console.print(f"kernels: patched {rep.patched or 'none'}; skipped {rep.skipped or 'none'}")
     tok = load_tokenizer(cfg.base_model)
     if base:
         with model.disable_adapter():
@@ -599,6 +613,7 @@ def ft_generate(
 def ft_pipeline(
     base_model: BaseOpt = "HuggingFaceTB/SmolLM2-360M-Instruct", steps: int = 300,
     source: str = "yahma/alpaca-cleaned", limit: int = 3000, workdir: Path = Path("."),
+    kernels: KernelsOpt = "off",
 ) -> None:
     """End to end: doctor -> data -> plan -> train -> eval/merge. Exit 1 if any gate fails."""
     import subprocess
@@ -612,7 +627,7 @@ def ft_pipeline(
                          "--limit", str(limit)]),
         ("plan", base + ["ft", "plan", "--base-model", base_model]),
         ("train", base + ["ft", "train", "--base-model", base_model, "--steps", str(steps),
-                          "--data-dir", d, "--run-dir", r]),
+                          "--data-dir", d, "--run-dir", r, "--kernels", kernels]),
         ("eval", base + ["ft", "eval", "--run-dir", r]),
     ]
     for name, cmd in stages:
@@ -888,6 +903,7 @@ def serve(
     engine: Annotated[str, typer.Option(help="hf (in-process) | llamacpp (GGUF via llama-server)")] = "",
     gguf: Annotated[Path | None, typer.Option(help="Base GGUF for --engine llamacpp.")] = None,
     lora_gguf: Annotated[Path | None, typer.Option(help="LoRA adapter GGUF for --engine llamacpp.")] = None,
+    kernels: KernelsOpt = "off",
 ) -> None:
     """Start the API + web UI.
 
@@ -913,6 +929,7 @@ def serve(
         os.environ["TINYFORGE_GGUF"] = str(gguf)
     if lora_gguf:
         os.environ["TINYFORGE_LORA_GGUF"] = str(lora_gguf)
+    os.environ["TINYFORGE_KERNELS"] = kernels
     uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
 
 

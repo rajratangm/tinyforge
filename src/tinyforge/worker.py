@@ -105,6 +105,8 @@ def to_ft_config(doc: dict, out: Path):
     for field, src, key in pairs:
         if key in src:
             kw[field] = src[key]
+    if "kernels" in s:
+        kw["kernels"] = s["kernels"]
     return FTConfig(**kw)
 
 

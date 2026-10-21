@@ -401,8 +401,14 @@ def ft_generate(req: FTGenRequest):
             cfg = FTConfig.model_validate_json((run_dir / "ft_config.json").read_text())
             hw = hardware.probe()
             base = load_base(cfg.base_model, cfg.quant, hw.bf16_supported, hw.device)
+            peft_model = PeftModel.from_pretrained(base, run_dir / "best")
+            mode = os.environ.get("TINYFORGE_KERNELS", "off")
+            if mode != "off" and hw.device == "cuda":
+                from .kernels.patch import apply_kernels
+
+                apply_kernels(peft_model, mode, inference=True)
             _ft_models["m"] = (
-                PeftModel.from_pretrained(base, run_dir / "best"),
+                peft_model,
                 load_tokenizer(cfg.base_model),
                 hw.device,
             )

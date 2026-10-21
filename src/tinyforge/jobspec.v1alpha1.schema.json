@@ -29,6 +29,11 @@
           "default": "native",
           "description": "Training engine. native = tinyforge's own loop (whole model on the GPU). soup = Soup CLI exact layer streaming run as a subprocess from its own venv (TINYFORGE_SOUP_BIN): trains models larger than VRAM, single GPU, BETA."
         },
+        "kernels": {
+          "enum": ["off", "auto", "force"],
+          "default": "off",
+          "description": "Verified Triton kernels (fused RMSNorm, SwiGLU, RoPE, cross-entropy). auto = use a kernel only if it matches the PyTorch result and is faster or saves memory; force = use any that matches; off = plain PyTorch. A failing kernel always falls back."
+        },
         "method": { "enum": ["lora", "qlora", "full"], "description": "full is reserved; the worker rejects it until implemented." },
         "model": {
           "type": "object",
