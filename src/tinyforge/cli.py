@@ -426,6 +426,8 @@ def kernels_verify(
     only: Annotated[str, typer.Option(help="Check a single kernel by name.")] = "",
     dtype: Annotated[str, typer.Option(help="bf16 | fp16 | fp32")] = "bf16",
     device: str = "cuda",
+    file: Annotated[Path | None, typer.Option(help="Check the kernel(s) in this file instead of the "
+                                              "built-in ones.")] = None,
 ) -> None:
     """Check every kernel's output and gradients against the PyTorch reference. Exit 1 if any differ."""
     import torch
@@ -434,10 +436,21 @@ def kernels_verify(
 
     if dtype not in bench.DTYPES:
         raise typer.BadParameter("must be bf16, fp16 or fp32", param_hint="--dtype")
-    bench.load_builtin_specs()
-    shapes = bench.shapes_for_model(model) if model else bench.shapes_for_config(bench.DEFAULT_CFG)
+    specs, load_errors = None, {}
+    if file is not None:
+        from .kernels.user import load_user_kernels
+
+        specs, load_errors = load_user_kernels([file])
+        for path, err in load_errors.items():
+            console.print(f"[red]could not load {escape(path)}:[/] {escape(err)}")
+        shapes = {}
+    else:
+        bench.load_builtin_specs()
+        shapes = bench.shapes_for_model(model) if model else bench.shapes_for_config(bench.DEFAULT_CFG)
     dev = device if device != "cuda" or torch.cuda.is_available() else "cpu"
-    rows = bench.verify_rows(shapes, bench.DTYPES[dtype], dev, only or None)
+    rows = bench.verify_rows(shapes, bench.DTYPES[dtype], dev, only or None, specs)
+    if load_errors:
+        raise typer.Exit(1)
     if not rows:
         console.print("[yellow]No kernels registered (is Triton installed?).[/]")
         raise typer.Exit(1)
@@ -449,6 +462,24 @@ def kernels_verify(
     console.print(table)
     console.print("verified on the shapes and dtype listed above only")
     raise typer.Exit(0 if all(r["ok"] for r in rows) else 1)
+
+
+@kernels_app.command("new")
+def kernels_new(
+    name: Annotated[str, typer.Argument(help="Name for your kernel (letters, digits, underscore).")],
+    out: Annotated[Path, typer.Option(help="Folder to write NAME.py into.")] = Path("tinyforge_kernels"),
+) -> None:
+    """Write a working kernel template (GeGLU with a model target) that you can edit."""
+    from .kernels.user import scaffold
+
+    try:
+        path = scaffold(name, out)
+    except (ValueError, FileExistsError) as e:
+        raise typer.BadParameter(str(e)) from e
+    console.print(f"Wrote {path}")
+    console.print(f"Check it:   tinyforge kernels verify --file {path}")
+    console.print(f"Use it:     tinyforge ft train ... --kernels auto --kernel-path {path}")
+    console.print("It runs only if it matches PyTorch (outputs and gradients) and is faster or saves memory.")
 
 
 @kernels_app.command("bench")

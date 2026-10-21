@@ -54,15 +54,19 @@ class _FusedCE(torch.autograd.Function):
         _ce[(n,)](logits, labels, rows, v, BLOCK=block, num_warps=num_warps)
         ctx.save_for_backward(logits, hidden, weight)  # `logits` now holds dlogits
         ctx.has_bias = bias is not None
+        ctx.bias_dtype = bias.dtype if bias is not None else None
         return rows.sum()
 
     @staticmethod
     def backward(ctx, g):
         dl, hidden, weight = ctx.saved_tensors
         dl.mul_(g)  # in place: the buffer is only ever consumed once (checkpoint recomputes it)
-        dh = dl @ weight if ctx.needs_input_grad[0] else None
-        dw = dl.t() @ hidden if ctx.needs_input_grad[1] else None  # skipped for a frozen LM head (LoRA)
-        db = dl.sum(0) if ctx.has_bias and ctx.needs_input_grad[2] else None
+        # autocast computed the logits in bf16/fp16, but hidden and the LM head can be fp32 (QLoRA preparation
+        # casts every weight to fp32): matmul in the logits dtype, return gradients in the inputs dtypes
+        cd = dl.dtype
+        dh = (dl @ weight.to(cd)).to(hidden.dtype) if ctx.needs_input_grad[0] else None
+        dw = (dl.t() @ hidden.to(cd)).to(weight.dtype) if ctx.needs_input_grad[1] else None  # None if frozen
+        db = dl.sum(0).to(ctx.bias_dtype) if ctx.has_bias and ctx.needs_input_grad[2] else None
         return dh, dw, db, None, None, None
 
 

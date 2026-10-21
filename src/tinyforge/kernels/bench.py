@@ -50,9 +50,9 @@ def shapes_for_model(name: str) -> dict[str, tuple[int, ...]]:
 
 
 def verify_rows(shapes: dict[str, tuple[int, ...]], dtype: torch.dtype, device: str = "cuda",
-                only: str | None = None) -> list[dict]:
+                only: str | None = None, specs: list | None = None) -> list[dict]:
     rows = []
-    for spec in registry.all_specs():
+    for spec in specs if specs is not None else registry.all_specs():
         if only and spec.name != only:
             continue
         shape = shapes.get(spec.name) or spec.example_shape

@@ -131,3 +131,32 @@ def test_kernel_report_is_rewritten_with_runtime_fallbacks(tmp_path, monkeypatch
     finetune._write_kernel_report(m, c)
     final = json.loads((tmp_path / "kernel_report.json").read_text())
     assert "rmsnorm" not in final["patched"] and "kernel died mid-run" in final["skipped"]["rmsnorm"]
+
+
+@cuda
+@pytest.mark.parametrize("use_checkpointing", [False, True])
+def test_kbit_style_model_with_fp32_norms_trains_with_kernels(use_checkpointing):
+    """prepare_model_for_kbit_training (QLoRA) casts weights, including the LM head, to fp32 while autocast
+    computes in bf16, so dtypes mix. Kernels must either handle that or step aside, never crash."""
+    from peft import LoraConfig, get_peft_model
+
+    from tinyforge.kernels.patch import decide_fused_ce
+    from tinyforge.memory import causal_lm_loss
+
+    m = _tiny().to(torch.bfloat16)
+    for param in m.parameters():  # what prepare_model_for_kbit_training does to every half-precision weight
+        param.data = param.data.float()
+    if use_checkpointing:
+        m.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        m.enable_input_require_grads()
+    m = get_peft_model(m, LoraConfig(r=4, target_modules="all-linear", task_type="CAUSAL_LM")).train()
+    report = apply_kernels(m, mode="force")
+    fused = decide_fused_ce(m, "force", report) or False
+    ids = torch.randint(0, 128, (2, 16), device="cuda")
+    batch = {"input_ids": ids, "attention_mask": torch.ones_like(ids), "labels": ids}
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        loss = causal_lm_loss(m, batch, 16, fused=fused)
+    loss.backward()
+    assert torch.isfinite(loss) and report.skipped.keys() <= {"rmsnorm"}, report
+    lora_grads = [p.grad for n, p in m.named_parameters() if "lora_B" in n and p.grad is not None]
+    assert lora_grads and any(g.abs().max() > 0 for g in lora_grads)
