@@ -63,7 +63,8 @@ def test_patched_model_outputs_and_grads_match(dtype):
     lo_ref.sum().backward()
     lo.sum().backward()
     g_ref, g = ref.model.embed_tokens.weight.grad.float(), m.model.embed_tokens.weight.grad.float()
-    g_tol = (1e-3 if dtype == torch.float32 else 5e-2) * max(1.0, g_ref.abs().max().item())  # relative to grad size
+    # bf16 gradients are compared relative to their own size
+    g_tol = (1e-3 if dtype == torch.float32 else 5e-2) * max(1.0, g_ref.abs().max().item())
     assert (g_ref - g).abs().max() < g_tol
 
 
