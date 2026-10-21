@@ -420,6 +420,55 @@ def kernels_doctor(as_json: JsonOpt = False) -> None:
         raise typer.Exit(1)
 
 
+@kernels_app.command("verify")
+def kernels_verify(
+    model: Annotated[str, typer.Option(help="Use this model's real layer shapes (Hugging Face id).")] = "",
+    only: Annotated[str, typer.Option(help="Check a single kernel by name.")] = "",
+    dtype: Annotated[str, typer.Option(help="bf16 | fp16 | fp32")] = "bf16",
+    device: str = "cuda",
+) -> None:
+    """Check every kernel's output and gradients against the PyTorch reference. Exit 1 if any differ."""
+    import torch
+
+    from .kernels import bench
+
+    if dtype not in bench.DTYPES:
+        raise typer.BadParameter("must be bf16, fp16 or fp32", param_hint="--dtype")
+    bench.load_builtin_specs()
+    shapes = bench.shapes_for_model(model) if model else bench.shapes_for_config(bench.DEFAULT_CFG)
+    dev = device if device != "cuda" or torch.cuda.is_available() else "cpu"
+    rows = bench.verify_rows(shapes, bench.DTYPES[dtype], dev, only or None)
+    if not rows:
+        console.print("[yellow]No kernels registered (is Triton installed?).[/]")
+        raise typer.Exit(1)
+    table = Table("kernel", "shape", "dtype", "result", "max err", "grad err")
+    for r in rows:
+        res = "[green]match[/]" if r["ok"] else f"[red]FAIL[/] {escape(r['reason'])}"
+        table.add_row(r["kernel"], str(r["shape"]), r["dtype"], res,
+                      f"{r.get('max_err', 0):.2e}", f"{r.get('grad_err', 0):.2e}")
+    console.print(table)
+    console.print("verified on the shapes and dtype listed above only")
+    raise typer.Exit(0 if all(r["ok"] for r in rows) else 1)
+
+
+@kernels_app.command("bench")
+def kernels_bench(
+    model: Annotated[str, typer.Option(help="Hugging Face model id to train.")] =
+    "HuggingFaceTB/SmolLM2-360M-Instruct",
+    steps: int = 30, quant: str = "none", max_len: int = 256, data_dir: Path = Path("data/ft"),
+    out: Path = Path("benchmarks/kernels-bench.json"),
+) -> None:
+    """Train one short run with kernels off and one on; report tokens/s, peak VRAM and loss agreement."""
+    from .kernels import bench
+
+    r = bench.bench_model(model, steps, quant, data_dir, max_len=max_len)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(r, indent=2), encoding="utf-8")
+    console.print_json(json.dumps(r))
+    console.print(f"written to {out}")
+    raise typer.Exit(0 if r["loss_close"] else 1)
+
+
 ft_app = typer.Typer(help="Fine-tune pretrained models with LoRA/QLoRA.")
 app.add_typer(ft_app, name="ft")
 BaseOpt = Annotated[str, typer.Option(help="Hugging Face model id.")]

@@ -19,6 +19,7 @@ class KernelSpec:
     make_inputs: Callable[[tuple[int, ...], torch.dtype, str], tuple[torch.Tensor, ...]] | None = None
     memory_kernel: bool = False  # adopted for its memory saving even when not faster
     needs_grad: bool = True  # False: inference-only kernel, verified and timed forward-only
+    example_shape: tuple[int, ...] = ()  # what `kernels verify` runs on when no model supplies a shape
 
 
 _SPECS: dict[str, KernelSpec] = {}
