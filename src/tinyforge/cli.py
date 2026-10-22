@@ -1054,6 +1054,32 @@ def serve(
     uvicorn.run("tinyforge.server:app", host=cfg.host, port=cfg.port, **cfg.uvicorn)
 
 
+security_app = typer.Typer(help="AI security checks: model files, serving endpoints.")
+app.add_typer(security_app, name="security")
+
+
+@security_app.command("scan-model")
+def security_scan_model(
+    path: Path,
+    as_json: JsonOpt = False,
+) -> None:
+    """Check a model file/folder for code that runs on load (pickles, trust_remote_code). Exit 1 if unsafe."""
+    from . import modelscan
+
+    if not path.exists():
+        console.print(f"[bold red]ERROR[/] {escape(str(path))} does not exist")
+        raise typer.Exit(2)
+    rep = modelscan.report(modelscan.scan_path(path))
+    if as_json:
+        typer.echo(json.dumps(rep))
+    else:
+        console.print(f"[bold]{rep['verdict']}[/]")
+        for f in rep["findings"]:
+            console.print(f"  {f['severity']:8} {f['code']} {escape(f['file'])}: {escape(f['message'])}")
+        console.print(f"[dim]{rep['note']}[/]")
+    raise typer.Exit(1 if rep["verdict"] == "unsafe" else 0)
+
+
 def main() -> None:
     """Console entry point: a missing optional dependency gets advice and exit 2, not a traceback."""
     import sys
