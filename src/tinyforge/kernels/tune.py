@@ -60,9 +60,27 @@ def _store(path: Path, key: str, result: TuneResult) -> None:
     os.replace(tmp, path)
 
 
+_WARMED = False
+
+
+def _warm_gpu() -> None:
+    """Spin the GPU for ~0.2 s once per process so its clock is up before anything is timed."""
+    global _WARMED
+    if _WARMED or not torch.cuda.is_available():
+        return
+    _WARMED = True
+    a = torch.randn(2048, 2048, device="cuda")
+    end = time.perf_counter() + 0.2
+    while time.perf_counter() < end:
+        a = a @ a
+        a /= a.abs().max()
+    torch.cuda.synchronize()
+
+
 def _time(fn: Callable[[], object], label: str) -> float:
-    """Median milliseconds over 10 runs after 3 warmups (CUDA events when on a GPU)."""
-    for _ in range(3):
+    """Median milliseconds over 10 runs after warm-up (CUDA events when on a GPU)."""
+    _warm_gpu()
+    for _ in range(5):
         fn()
     times = []
     if torch.cuda.is_available():
@@ -120,13 +138,17 @@ def tune(spec: KernelSpec, shape: tuple[int, ...], dtype: torch.dtype, device: s
     else:
         torch.manual_seed(0)
         base = spec.make_inputs(shape, dtype, device)
-        ref_ms = time_fn(_runner(spec.reference, base, {}, spec.needs_grad), "ref")
+        ref_run = _runner(spec.reference, base, {}, spec.needs_grad)
+        ref_ms = time_fn(ref_run, "ref")
         best, best_ms = passing[0], float("inf")
         for params in passing:
             label = ",".join(f"{k}={v}" for k, v in params.items()) or "default"
             ms = time_fn(_runner(spec.kernel, base, params, spec.needs_grad), label)
             if ms < best_ms:
                 best, best_ms = params, ms
+        # the GPU clock ramps up during the first measurements; timing the reference again once it is warm and
+        # keeping the faster reading stops every kernel from looking better than it is
+        ref_ms = min(ref_ms, time_fn(ref_run, "ref"))
         faster = best_ms <= ref_ms * (1 - margin)
         adopted = faster or spec.memory_kernel
         reason = "" if adopted else (f"not {margin:.0%} faster than the reference "

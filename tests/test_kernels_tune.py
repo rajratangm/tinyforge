@@ -109,4 +109,17 @@ def test_inference_only_kernels_are_timed_forward_only(tmp_path):
     spec = _spec()
     spec.reference, spec.needs_grad = ref, False
     tune(spec, (4, 8), torch.float32, device="cpu", cache_dir=tmp_path, time_fn=run_and_time)
-    assert seen == [False]
+    assert seen and not any(seen)  # the reference is timed twice (see the warm-up test), always forward-only
+
+
+def test_reference_is_retimed_after_the_candidates_and_the_faster_reading_wins(tmp_path):
+    """A cold GPU clock makes the first measurement slow. Timing the reference only once, first, would make
+    every kernel look faster than it is (and the cache would keep that number), so it is retimed at the end."""
+    ref_readings = iter([40.0, 10.0])
+
+    def time_fn(fn, label):
+        return next(ref_readings) if label == "ref" else {"num_warps=2": 8.0, "num_warps=4": 5.0,
+                                                          "num_warps=8": 6.0}[label]
+
+    r = tune(_spec(), (4, 8), torch.float32, device="cpu", cache_dir=tmp_path, time_fn=time_fn)
+    assert r.ref_ms == 10.0 and r.kernel_ms == 5.0

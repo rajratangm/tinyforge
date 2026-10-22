@@ -1,0 +1,71 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "max_new_tokens": 80,
+  "kernels": {
+    "patched": [
+      "rmsnorm",
+      "swiglu",
+      "rope",
+      "add_rmsnorm"
+    ],
+    "skipped": {},
+    "speedups": {
+      "rmsnorm": 43.69,
+      "swiglu": 1.385,
+      "rope": 1.942,
+      "add_rmsnorm": 2.303
+    }
+  },
+  "identical_prompts": 4,
+  "prompts": 8,
+  "rows": [
+    {
+      "prompt": "Explain what a hash table is in two sentences.",
+      "max_logit_diff": 0.21875,
+      "first_divergence": 6,
+      "tokens": 27
+    },
+    {
+      "prompt": "Write a SQL query that counts the rows in a table called orders.",
+      "max_logit_diff": 0.28125,
+      "first_divergence": null,
+      "tokens": 6
+    },
+    {
+      "prompt": "List three differences between a process and a thread.",
+      "max_logit_diff": 0.25,
+      "first_divergence": 27,
+      "tokens": 80
+    },
+    {
+      "prompt": "What is the capital of France, and what river runs through it?",
+      "max_logit_diff": 0.3125,
+      "first_divergence": null,
+      "tokens": 17
+    },
+    {
+      "prompt": "Give me a short checklist for reviewing a pull request.",
+      "max_logit_diff": 0.21875,
+      "first_divergence": 5,
+      "tokens": 72
+    },
+    {
+      "prompt": "Translate 'good morning, how are you?' into Spanish.",
+      "max_logit_diff": 0.3125,
+      "first_divergence": null,
+      "tokens": 12
+    },
+    {
+      "prompt": "Why is the sky blue?",
+      "max_logit_diff": 0.21875,
+      "first_divergence": 28,
+      "tokens": 80
+    },
+    {
+      "prompt": "Summarise the plot of Romeo and Juliet in one paragraph.",
+      "max_logit_diff": 0.1875,
+      "first_divergence": null,
+      "tokens": 72
+    }
+  ]
+}
