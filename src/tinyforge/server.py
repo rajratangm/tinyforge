@@ -308,6 +308,72 @@ def get_hardware():
     }
 
 
+KERNEL_INFO = [
+    ("rmsnorm", "RMSNorm layers, forward and backward"),
+    ("swiglu", "silu(gate) * up inside the MLP, no intermediate kept"),
+    ("rope", "rotary position embedding, including grouped-query attention"),
+    ("fused_ce", "cross-entropy loss without a full fp32 copy of the logits (the big memory saving)"),
+    ("add_rmsnorm", "residual add + RMSNorm in decoder layers (inference only)"),
+]
+_kernel_env_cache: dict = {}
+
+
+def _kernel_env(ttl: float = 60.0) -> dict:
+    """Can Triton kernels run here? Compiles a tiny kernel, so the answer is cached for a minute."""
+    from dataclasses import asdict
+
+    from .kernels import env
+
+    hit = _kernel_env_cache.get("v")
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    value = asdict(env.triton_status())
+    _kernel_env_cache["v"] = (time.time(), value)
+    return value
+
+
+def _read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+@api.get("/kernels")
+def api_kernels():
+    """What the Kernels card shows: Triton status, kernel list, latest run report, recorded benchmarks."""
+    benchmarks = []
+    for f in sorted((ROOT / "benchmarks").glob("kernels-phase1-*.json")):
+        d = _read_json(f)
+        try:
+            benchmarks.append({
+                "file": f.name, "model": d["model"], "steps": d["steps"], "speedup": d["speedup"],
+                "vram_saved_gb": d["vram_saved_gb"], "loss_close": d["loss_close"],
+                "off_peak_gb": d["off"]["peak_mem_gb"], "auto_peak_gb": d["auto"]["peak_mem_gb"]})
+        except (TypeError, KeyError):
+            continue
+    return {"triton": _kernel_env(), "kernels": [{"name": n, "what": w} for n, w in KERNEL_INFO],
+            "report": _read_json(ROOT / "runs" / "ft" / "kernel_report.json"), "benchmarks": benchmarks}
+
+
+@api.post("/kernels/verify")
+def api_kernels_verify():
+    """Check every built-in kernel against PyTorch (outputs and gradients) on SmolLM2-360M shapes, in bf16."""
+    if _busy():
+        raise HTTPException(409, "GPU is busy with a running job.")
+    status = _kernel_env()
+    if not status["ok"]:
+        raise HTTPException(400, f"Triton kernels are unavailable here: {status['reason']}")
+    import torch
+
+    from .kernels import bench
+
+    bench.load_builtin_specs()
+    rows = bench.verify_rows(bench.shapes_for_config(bench.DEFAULT_CFG), torch.bfloat16, "cuda")
+    return {"ok": all(r["ok"] for r in rows), "rows": rows,
+            "note": "verified on the shapes and dtype listed only"}
+
+
 def _backends_installed() -> tuple[str, ...]:
     from . import deps
 

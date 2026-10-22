@@ -90,6 +90,18 @@ canvas{width:100%;height:200px}.row{display:flex;gap:8px}.row>*{flex:1}
     </div>
     <div id="srv_note" style="color:var(--mut);font-size:12px;margin-top:6px"></div></section>
 
+  <section class="card wide" id="kernels"><h2>Kernels (Triton)</h2>
+    <div id="k_status" style="color:var(--mut)">Checking...</div>
+    <div id="k_list"></div>
+    <div style="margin:10px 0"><button id="k_verify" class="sec">Verify against PyTorch</button>
+      <small style="color:var(--mut)"> checks outputs and gradients on SmolLM2-360M shapes; needs an idle GPU</small></div>
+    <div id="k_verify_out"></div>
+    <h2 style="margin-top:14px">Latest training run</h2>
+    <div id="k_report" style="color:var(--mut)">No run with kernels yet. Train with <code>--kernels auto</code>.</div>
+    <h2 style="margin-top:14px">Recorded benchmarks</h2>
+    <div id="k_bench" style="color:var(--mut)">None found.</div>
+  </section>
+
   <section class="card wide"><h2>Log</h2><pre id="log"></pre></section>
 </main>
 <script>
@@ -274,7 +286,36 @@ async function loadTelemetry(){
 }
 async function fetchTelemetry(){const r=await fetch('/api/telemetry',{headers:authH()});if(!r.ok)throw new Error(r.status);return r.json()}
 setInterval(loadTelemetry,2000);loadTelemetry();
-loadHw();loadRuns();
+async function loadKernels(){
+  let d;
+  try{d=await api('/api/kernels')}catch(e){$('k_status').textContent='Could not read kernel status: '+e.message;return}
+  const t=d.triton;
+  $('k_status').innerHTML=t.ok
+    ?`<span style="color:var(--ok,#4ade80)">Triton ${esc(t.triton_version)} works on ${esc(t.gpu)} (sm_${esc(t.compute_capability)}).</span> Use <code>--kernels auto</code> when training or serving.`
+    :`<span style="color:var(--bad,#f87171)">Triton kernels are unavailable:</span> ${esc(t.reason)} Everything keeps running on plain PyTorch.`;
+  $('k_list').innerHTML=table(['kernel','what it replaces'],d.kernels.map(k=>[`<code>${esc(k.name)}</code>`,esc(k.what)]));
+  if(d.report){
+    const r=d.report,sp=r.speedups||{};
+    $('k_report').innerHTML=`patched: <b>${esc((r.patched||[]).join(', ')||'none')}</b>`+
+      Object.keys(r.skipped||{}).map(k=>`<div>skipped <code>${esc(k)}</code>: ${esc(r.skipped[k])}</div>`).join('')+
+      (Object.keys(sp).length?table(['kernel','measured speed-up'],Object.entries(sp).map(([k,v])=>[esc(k),esc(v)+'x'])):'');
+  }
+  if(d.benchmarks.length){
+    $('k_bench').innerHTML=table(['file','model','steps','tokens/s','peak memory','loss'],d.benchmarks.map(b=>
+      [esc(b.file),esc(b.model),esc(b.steps),(b.speedup>=1?'+':'')+((b.speedup-1)*100).toFixed(1)+'%',
+       esc(b.off_peak_gb.toFixed(2))+' to '+esc(b.auto_peak_gb.toFixed(2))+' GB',b.loss_close?'matches':'<b>differs</b>']));
+  }
+}
+$('k_verify').onclick=async()=>{
+  const out=$('k_verify_out');out.textContent='Checking each kernel against PyTorch...';
+  try{
+    const d=await api('/api/kernels/verify',{method:'POST'});
+    out.innerHTML=table(['kernel','shape','dtype','result','max error'],d.rows.map(r=>
+      [esc(r.kernel),esc(JSON.stringify(r.shape)),esc(r.dtype),r.ok?'match':'<b>FAIL</b> '+esc(r.reason||''),esc((r.max_err||0).toExponential(1))]))
+      +`<small style="color:var(--mut)">${esc(d.note)}</small>`;
+  }catch(e){out.textContent='Could not verify: '+e.message}
+};
+loadHw();loadRuns();loadKernels();
 </script>
 </body>
 </html>
