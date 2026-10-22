@@ -140,6 +140,7 @@ def apply_kernels(model: torch.nn.Module, mode: str = "auto", inference: bool = 
     """mode: off | auto (adopt only what is faster or saves memory) | force (adopt anything that verifies).
     user_paths: files/folders of user-defined kernels to load (explicit only, see kernels/user.py).
     fuse: also look for op chains no library kernel covers and generate kernels for them (kernels/fuse.py)."""
+    restore_kernels(model)  # the model ends up in exactly the state `mode` asks for, never a stack of patches
     report = KernelReport()
     model._tinyforge_kernel_report = report
     if mode == "off":

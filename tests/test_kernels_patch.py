@@ -12,6 +12,11 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 @pytest.fixture(autouse=True)
 def _tune_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("TINYFORGE_CACHE", str(tmp_path))
+    import transformers.models.qwen2.modeling_qwen2 as q2
+
+    orig = q2.apply_rotary_pos_emb  # rope is patched on the module, so tests that never restore would leak it
+    yield
+    q2.apply_rotary_pos_emb = orig
 
 
 def tiny_cfg() -> Qwen2Config:
@@ -192,3 +197,20 @@ def test_gradient_checkpointing_neither_trips_the_fallback_nor_changes_gradients
     assert {"rmsnorm", "swiglu", "rope"} <= set(r.patched) and r.skipped == {}, r
     g_ref, g = ref.model.embed_tokens.weight.grad, m.model.embed_tokens.weight.grad
     assert (g_ref - g).abs().max() < 1e-3 * max(1.0, g_ref.abs().max().item())
+
+
+@cuda
+def test_applying_kernels_twice_does_not_stack_wrappers_and_restore_still_clears_everything():
+    m = tiny(torch.float32, "cuda")
+    first = sorted(apply_kernels(m, mode="force").patched)  # the second call empties the first report
+    second = apply_kernels(m, mode="force")  # e.g. a model reloaded into the same object, or a second call
+    assert first and first == sorted(second.patched) and second.skipped == {}
+    # one wrapper per module, not a wrapper around a wrapper
+    ref = tiny(torch.float32, "cuda")
+    x = ids("cuda")
+    assert (ref(x).logits - m(x).logits).abs().max() < 1e-3
+    restore_kernels(m)
+    assert patched_forwards(m) == 0
+    import transformers.models.qwen2.modeling_qwen2 as q2
+
+    assert q2.apply_rotary_pos_emb.__module__ == "transformers.models.qwen2.modeling_qwen2"
