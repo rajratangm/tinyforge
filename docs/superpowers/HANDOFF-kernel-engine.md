@@ -1,72 +1,92 @@
-# Kernel engine: handoff (written 2026-10-22, session budget ending)
+# Kernel engine: handoff (updated 2026-10-22, end of session)
 
 Read this first when resuming. Branch: `feat/kernel-engine` (local only, **nothing pushed**, not merged to `main`).
-Spec: `docs/superpowers/specs/2026-10-22-kernel-engine-design.md`. Plan:
-`docs/superpowers/plans/2026-10-22-kernel-engine.md` (Tasks 1-16). User-facing doc: `docs/kernels.md`.
-Ledger (git-ignored scratch): `.superpowers/sdd/2026-10-22-kernel-engine/progress.md`.
+User guide: `docs/kernels.md`. Spec: `docs/superpowers/specs/2026-10-22-kernel-engine-design.md`. Plan:
+`docs/superpowers/plans/2026-10-22-kernel-engine.md` (Tasks 1-16). Ledger (git-ignored scratch):
+`.superpowers/sdd/2026-10-22-kernel-engine/progress.md`.
 
 ## Why this exists
-The user said tinyforge "does nothing" for kernels and wants it to create dynamic kernels that are used in real
-training and inference. Findings at the start: the only kernel was a 27-line forward-only RMSNorm used by the toy GPT,
-not by the HF fine-tune/serve path; the UI is one 280-line HTML file. Chosen direction: a verified kernel library
-with auto-fusion later (library first), Triton only (no nvcc/MSVC on the laptop; JAX parked: no native Windows GPU).
+The user said tinyforge "does nothing" for kernels and wants dynamic kernels used in real training and inference.
+At the start the only kernel was a 27-line forward-only RMSNorm used by the toy GPT, not by the HF fine-tune/serve
+path. Direction chosen: a verified Triton kernel library, then auto-fusion, then user-written kernels. Triton only
+(no nvcc/MSVC on the laptop). JAX is parked (no native Windows GPU support).
 
-## State
+## State: all 16 plan tasks are implemented and tested
 
-| Task | Status |
-|---|---|
-| 1 Triton smoke test + `kernels doctor` | done; Triton 3.8.0 works on the RTX 3050 Ti (`benchmarks/kernels-smoke.json`) |
-| 2 registry, 3 verifier, 4 autotuner+cache | done |
-| 5 RMSNorm fwd+bwd, 6 SwiGLU, 7 RoPE, 8 fused cross-entropy, 9 add+RMSNorm (inference) | done |
-| 10 patcher (`apply_kernels`, `restore_kernels`, fallback) | done |
-| 11 `--kernels` on ft/serve/JobSpec/CRD/Go + drift guard | done |
-| 12 `kernels verify` / `kernels bench` + acceptance | **partly done**, see below |
-| 13-15 phase 2: op table + Triton codegen, fx chain finder, fusion in patcher | not started |
-| 16 user-defined kernels (added at the user's request, after Task 12) | not started (spec section 6b) |
+| Task | What | Status |
+|---|---|---|
+| 1 | Triton smoke test, `kernels doctor` | done (`benchmarks/kernels-smoke.json`) |
+| 2-4 | registry, verifier (outputs + gradients), autotuner + per-GPU cache | done |
+| 5-9 | RMSNorm, SwiGLU, RoPE (GQA), fused cross-entropy, residual+RMSNorm (inference) | done |
+| 10 | patcher: `apply_kernels`, `restore_kernels`, automatic fallback | done |
+| 11 | `--kernels` on ft/serve/JobSpec/CRD/Go, first-batch drift guard | done |
+| 12 | `kernels verify` / `kernels bench`, acceptance runs | done; default left at `off` (see Rulings) |
+| 13 | `codegen.py`: Triton fwd+bwd generator for op chains (17 ops, row reductions) | done |
+| 14 | `fuse.py`: torch.fx chain finder | done |
+| 15 | auto-fusion in the patcher, `--fuse`, `kernels fuse --model` | done |
+| 16 | user-defined kernels: `kernels new`, `verify --file`, `--kernel-path` | done |
 
-Full suite at Task 11: 439 passed, 1 skipped; ruff clean; `go vet`/`go test ./...` ok. Run after any change:
-`.venv\Scripts\python -m pytest -q --no-cov` and `.venv\Scripts\ruff check src tests`.
+Re-run before trusting anything: `.venv\Scripts\python -m pytest -q --no-cov`, `.venv\Scripts\ruff check src tests`,
+and the Go tests with `GOROOT=tools/go-sdk/go GOPATH=tools/go-sdk/gopath` (`go vet ./... && go test ./...`).
+Final run on 2026-10-22: **534 passed, 1 skipped**, ruff clean, `go vet` and `go test ./...` clean.
+Review status: there was no independent whole-branch review (it needs a separate reviewer; only a self-review by
+the author was done), so a fresh reviewer pass over `git diff main...feat/kernel-engine -- src/tinyforge/kernels`
+is still worth doing before merging.
 
-## Task 12: what remains (do in this order)
-1. **Benchmark 360M: DONE after `a9c22f1`** (`benchmarks/kernels-phase1-smollm2-360m.json`: +14.5% tok/s, 2.19 to 1.34 GB peak, same loss; see `docs/kernels.md` Results). Re-run only if kernels change.
-2. Same for Qwen2.5-1.5B 4-bit (`--model Qwen/Qwen2.5-1.5B-Instruct --quant 4bit`, data in `data/sql` or `data/ft`
-   prepared for that tokenizer) if it fits; expect `rmsnorm` to fall back under 4-bit (fp32 norm weights).
-3. Greedy `ft generate` with `--kernels off` vs `auto` against a trained adapter (`runs/kernel-bench/auto`).
-   Seen so far: outputs agree for the first ~25 tokens then one word differs (bf16 rounding); document, do not hide.
-4. Only if 1-3 pass: change the `--kernels` default to `auto` (`FTConfig.kernels`, CLI `KernelsOpt` defaults,
-   schema/CRD/Go default), update `docs/kernels.md` Results, `README.md` "Verified results", `CHANGELOG.md`.
-   Otherwise leave `off` and record why.
-5. Run Task 16 (plan has the exact steps), then phase 2 (Tasks 13-15) if budget allows.
-
-## Findings during execution (all fixed with a failing test first, except where noted)
-1. `apply_kernels`: the SwiGLU forward read the loop-shared variable `params` (late binding); after RoPE reassigned
-   it, SwiGLU raised `KeyError: 'BLOCK'` and silently fell back. Test:
-   `test_no_kernel_silently_falls_back_during_a_real_forward_and_backward`.
-2. Gradient checkpointing (the planner turns it on for 4 GB): torch's non-reentrant checkpoint raises
-   `_StopRecomputationError` through the patched forward; the fallback `except Exception` swallowed it and training
-   crashed. Test: `test_gradient_checkpointing_neither_trips_the_fallback_nor_changes_gradients`. Lesson: the
-   fallback design can hide a broken kernel, so tests must assert nothing fell back (`report.skipped == {}`).
-3. HF passes cos/sin of batch 1 during training; the RoPE kernel indexed them per batch (silent wrong values).
-   Fixed with a batch stride; non-broadcastable shapes now raise.
-4. `tune._runner` timed the reference fwd+bwd but inference-only kernels forward-only; now honours `needs_grad`.
-5. `kernels bench` could leave an older run's JSON behind after a crash; now deletes it first.
-6. Not a bug: the drift-guard test needed a large sabotage (x50) because a randomly initialised tiny model has
-   near-zero logits.
+## Measured results (one machine: Windows 11, RTX 3050 Ti 4 GB; all in `benchmarks/`)
+* SmolLM2-360M bf16, 30 steps, off vs auto: 1406 -> 1611 tok/s (+14.5%), peak 2.19 -> 1.34 GB (-39%), same loss.
+  Two earlier valid runs gave +17.4% and +14.5%.
+* Qwen2.5-1.5B 4-bit QLoRA, 20 steps: 421 -> 439 tok/s (+4.3%), peak 2.95 -> 2.50 GB, same loss.
+* Generated activation kernels (`tools/bench_fusion.py`): gelu_new 6.8x, gelu_fast 6.5x, quick_gelu 2.7x,
+  relu2 2.1x, memory 144/192/96/96 -> 48 MB. mish is not fused (softplus unsupported).
+* Greedy generation, kernels on vs off: 4 of 8 prompts identical over 80 tokens, others diverge at token 6-43
+  (bf16 rounding). Documented in `docs/kernels.md`; do not claim token-identical output.
 
 ## Rulings made on the user's behalf
-Branch in place instead of a worktree (venv/CUDA/tools live in the main checkout). `time_fn(fn, label)` signature in
-the tuner. RMSNorm follows the HF cast order. Fused CE is tuned on a proxy width (<= 512) to fit 4 GB and passed to
-the loss as parameters rather than patched as a module. The drift guard bypasses patches with an `enabled` flag.
-`ft_data`/chat-template audit and the other earlier follow-ups in `OBJECTIVES.md` were not touched.
+* Default `--kernels` stays `off`: every result is from one Windows laptop and generation is not bit-identical;
+  flip to `auto` after Linux + a second GPU repeat the acceptance runs (change `FTConfig.kernels`, the CLI
+  `KernelsOpt` defaults, schema/CRD/Go defaults, docs). Cost if wrong: users must pass `--kernels auto`.
+* User kernels load only from explicit `--kernel-path` / `TINYFORGE_KERNEL_PATH`, never from the current directory,
+  a JobSpec or the network (they are arbitrary code). The spec originally said `./tinyforge_kernels` implicitly.
+* Template for `kernels new` lives in the package (`kernels/templates/geglu.py`) so it ships in the wheel.
+* Fused CE is tuned on a proxy width (<= 512) to fit 4 GB; passed to the loss as params, not patched as a module.
+* Drift guard bypasses patches with `_Patches.enabled` instead of restoring and re-applying.
+* Branch in place rather than a worktree (venv, CUDA and tools live in the main checkout).
 
-## Known gaps and risks
-* Everything is verified only on this Windows laptop (RTX 3050 Ti, torch 2.6.0+cu124, triton 3.8.0, transformers
-  5.18.0). Linux, other GPUs, multi-GPU DDP + kernels, QLoRA + kernels are untested.
-* `test_core.py`'s old toy-GPT RMSNorm path (`rmsnorm_triton`) is unchanged and still used by `model.py`.
-* The tune cache lives in `~/.cache/tinyforge/kernel_tune.json` (override `TINYFORGE_CACHE`); tests redirect it.
-* Task 11 tests the training wiring via `_enable_kernels` and the drift guard separately; there is no automated test
-  that runs a full `finetune.train` with kernels (the `kernels bench` acceptance run is that test).
-* Local `main` is still ~55+ commits ahead of origin per earlier notes, nothing published; do not push or publish to
-  PyPI without asking the user.
-* Superseded by this work: the user's wish for a UI workbench and attention/quantised-matmul kernels (phase 3) is
-  still open; see the spec's non-goals.
+## Bugs found by running it for real (each fixed with a failing test first)
+1. SwiGLU forward read a loop-shared `params` variable (late binding) and silently fell back (KeyError BLOCK).
+2. Gradient checkpointing: torch's `_StopRecomputationError` passed through the patched forward was treated as a
+   kernel failure and crashed training. Control-flow exceptions now pass through untouched.
+3. RoPE indexed cos/sin per batch but HF passes batch-1 cos/sin during training: silent wrong values.
+4. QLoRA (`prepare_model_for_kbit_training` casts every weight to fp32): fused CE backward did bf16 @ fp32.
+5. The tuner timed the reference once, on a cold GPU clock, so kernels looked up to 10x faster than they were and
+   the cache kept it; the reference is now timed again after the candidates and the faster reading wins, with a
+   0.2 s GPU warm-up.
+6. Tuner timed inference-only kernels against a forward+backward reference; `kernels bench` could leave a stale
+   result file after a crash; test fixtures that restored a registry snapshot deleted built-in kernels.
+Lesson: the fallback design hides broken kernels, so tests assert `report.skipped == {}` and the report is rewritten
+at the end of training.
+
+## Known gaps and risks (be honest about these)
+* Verified only on this laptop (torch 2.6.0+cu124, triton 3.8.0, transformers 5.18.0). Not tested: Linux, other
+  GPUs, multi-GPU DDP + kernels, bigger models, a full-length run, `--fuse` in a full training run (only a tiny
+  GPT-2 and the activation micro-benchmarks).
+* RoPE patching replaces the model file's module-level `apply_rotary_pos_emb`, which affects every model of that
+  family in the process until `restore_kernels(model)`.
+* `rmsnorm` steps aside under QLoRA (fp32 norm weights, bf16 activations); `rmsnorm` backward always computes the
+  weight gradient even though norm weights are frozen under LoRA (small waste).
+* Fusion covers leaf modules only (fx cannot trace HF decoder layers), the op list in `docs/kernels.md`, and
+  same-shape inputs; it does not fuse into attention or matmuls.
+* Not in this plan at all: attention and quantised-matmul kernels (phase 3), the UI workbench, a kernels page in
+  the web UI. Renting a Linux/large GPU (Vast.ai has no standard free credit; needs the user's account, API key and
+  a few dollars) is the next validation step; nothing was rented.
+* Local `main` is far ahead of origin from earlier work and this branch adds ~35 commits; nothing is pushed or
+  published. Ask before pushing, merging or publishing to PyPI.
+* I once committed `tools/kagvenv/` (a virtualenv) by running `git add -A tools`; it was undone before anything
+  else happened (reset --soft, recommit). The untracked `tools/kagvenv`, `kk`, `nbpatch`, `video`, `dist/` are the
+  user's, were there before this work, and must never be added with `git add -A`.
+
+## If you resume
+1. Run the three checks above. 2. Read `docs/kernels.md` (what is promised). 3. Next valuable step is validation on
+Linux + a bigger GPU (`pip install tinyforge`, `tinyforge kernels doctor`, `kernels verify`, `kernels bench`, then
+`--fuse`), then flip the default. 4. Phase 3 (attention, quantised matmul) only after that.
