@@ -192,6 +192,7 @@ raw numbers. These are single runs on small test sets, not benchmarks: read the 
 
 | What was tested | Result | Data |
 |---|---|---|
+| Verified Triton kernels (`--kernels auto`), SmolLM2-360M fine-tune, kernels off vs on, same run twice | **+14.5%** tokens/s, peak GPU memory **2.19 -> 1.34 GB**, final loss identical; 4-bit Qwen2.5-1.5B: +4.3%, 2.95 -> 2.50 GB. One laptop GPU, 20-30 steps, default stays off. Greedy generation can differ slightly (bf16 rounding) | [`kernels-phase1-smollm2-360m.json`](benchmarks/kernels-phase1-smollm2-360m.json), [`docs/kernels.md`](docs/kernels.md) |
 | Llama-3.1-8B fine-tuned on a 4 GB GPU (layer streaming through the job spec), served with llama.cpp | trained 200 steps in 9.5 min; on 100 questions about a table it never saw: **100%** execution accuracy vs **93%** for the same model told to reply with SQL only | [`e8-penguins-8b-soup.json`](benchmarks/e8-penguins-8b-soup.json) |
 | Same 8B model, harder question shapes never used in training | **98%** vs **97%**: no meaningful gain over a well-prompted base model. Fine-tuning mostly fixed output format | [`e8-penguins-8b-hard.json`](benchmarks/e8-penguins-8b-hard.json) |
 | Qwen2.5-3B fine-tuned end to end (data -> train -> evaluate -> serve) | **98%** execution accuracy vs **70%** for the base model told to reply with SQL (0% without that instruction) | [`e2e-titanic-3b-soup.json`](benchmarks/e2e-titanic-3b-soup.json) |

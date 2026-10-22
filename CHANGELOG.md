@@ -12,6 +12,9 @@ Format: Keep a Changelog (https://keepachangelog.com), versioning: SemVer. Pre-1
 - Your own kernels: `tinyforge kernels new NAME` writes a working template; `kernels verify --file F` checks it;
   `--kernel-path F` uses it in `ft train|generate|pipeline` and `serve`. Loaded only from paths you name.
 - JobSpec `spec.kernels` (and the CRD / `forgectl` schema).
+- `--fuse` and `tinyforge kernels fuse --model M`: finds chains of ops no library kernel covers (for example GPT-2's
+  `gelu_new`), generates Triton forward and backward kernels for them, verifies and tunes them like any other kernel.
+  Measured 2.1x-6.8x faster than eager on the activation alone (`benchmarks/kernels-phase2.json`).
 
 ## [0.1.2] - 2026-10-09
 ### Fixed
