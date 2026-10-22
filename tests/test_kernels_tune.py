@@ -114,7 +114,7 @@ def test_inference_only_kernels_are_timed_forward_only(tmp_path):
 
 def test_reference_is_retimed_after_the_candidates_and_the_faster_reading_wins(tmp_path):
     """A cold GPU clock makes the first measurement slow. Timing the reference only once, first, would make
-    every kernel look faster than it is (and the cache would keep that number), so it is retimed at the end."""
+    every kernel look faster than it is (and the cache would keep that number), so it is retimed."""
     ref_readings = iter([40.0, 10.0])
 
     def time_fn(fn, label):

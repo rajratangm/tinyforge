@@ -41,7 +41,8 @@ def main(run_dir: Path, out: Path, max_new: int = 80) -> None:
     tok = load_tokenizer(cfg.base_model)
 
     def encode(p):
-        text = tok.apply_chat_template([{"role": "user", "content": p}], add_generation_prompt=True, tokenize=False)
+        msgs = [{"role": "user", "content": p}]
+        text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
         return tok(text, return_tensors="pt", add_special_tokens=False).to(hw.device)
 
     @torch.no_grad()

@@ -20,12 +20,12 @@
       ],
       "verified": true,
       "tuned_params": {
-        "BLOCK": 1024,
-        "num_warps": 4
+        "BLOCK": 512,
+        "num_warps": 8
       },
-      "eager_ms": 9.041408061981201,
-      "fused_ms": 1.324031949043274,
-      "speedup": 6.828693271725347,
+      "eager_ms": 9.071104049682617,
+      "fused_ms": 1.3260160088539124,
+      "speedup": 6.840870690183337,
       "eager_peak_mb": 144.0009765625,
       "fused_peak_mb": 48.0009765625
     },
@@ -44,12 +44,12 @@
       ],
       "verified": true,
       "tuned_params": {
-        "BLOCK": 2048,
+        "BLOCK": 1024,
         "num_warps": 4
       },
-      "eager_ms": 8.607712268829346,
-      "fused_ms": 1.3137919902801514,
-      "speedup": 6.551807540700448,
+      "eager_ms": 8.615935802459717,
+      "fused_ms": 1.3172640204429626,
+      "speedup": 6.540781247150738,
       "eager_peak_mb": 192.0009765625,
       "fused_peak_mb": 48.0009765625
     },
@@ -62,12 +62,12 @@
       ],
       "verified": true,
       "tuned_params": {
-        "BLOCK": 512,
+        "BLOCK": 2048,
         "num_warps": 8
       },
-      "eager_ms": 3.561471939086914,
-      "fused_ms": 1.3163520097732544,
-      "speedup": 2.705561971755859,
+      "eager_ms": 3.547584056854248,
+      "fused_ms": 1.3115359544754028,
+      "speedup": 2.7049079704972594,
       "eager_peak_mb": 96.0009765625,
       "fused_peak_mb": 48.0009765625
     },
@@ -83,12 +83,12 @@
       ],
       "verified": true,
       "tuned_params": {
-        "BLOCK": 2048,
+        "BLOCK": 512,
         "num_warps": 8
       },
-      "eager_ms": 2.8359040021896362,
-      "fused_ms": 1.3199360370635986,
-      "speedup": 2.148516233027884,
+      "eager_ms": 2.8312160968780518,
+      "fused_ms": 1.3260799646377563,
+      "speedup": 2.13502667439173,
       "eager_peak_mb": 96.0009765625,
       "fused_peak_mb": 48.0009765625
     }

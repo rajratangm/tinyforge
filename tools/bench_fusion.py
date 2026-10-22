@@ -61,7 +61,9 @@ def main(out: Path) -> None:
         def eager(module=module, xa=xa):
             module(xa).sum().backward()
 
-        def fused(gen=gen, xb=xb, params=dict(tuned.params)):
+        params = dict(tuned.params)
+
+        def fused(gen=gen, xb=xb, params=params):
             gen.kernel(xb, **params).sum().backward()
 
         entry.update({"ops_fused": chain.ops, "verified": v.ok, "tuned_params": tuned.params,
