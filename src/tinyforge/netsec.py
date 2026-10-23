@@ -108,7 +108,7 @@ def build_csp(ui_html: bytes | None) -> str:
     """
     hashes = []
     for m in _INLINE_SCRIPT.finditer(ui_html or b""):
-        body = m.group(1)
+        body = m.group(1).replace(b"\r\n", b"\n").replace(b"\r", b"\n")  # browsers hash LF-normalised text
         if body.strip():
             hashes.append("'sha256-" + base64.b64encode(hashlib.sha256(body).digest()).decode() + "'")
     return "; ".join([

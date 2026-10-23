@@ -201,6 +201,9 @@ def test_gradient_checkpointing_neither_trips_the_fallback_nor_changes_gradients
 
 @cuda
 def test_applying_kernels_twice_does_not_stack_wrappers_and_restore_still_clears_everything():
+    import transformers.models.qwen2.modeling_qwen2 as q2
+
+    before = q2.apply_rotary_pos_emb
     m = tiny(torch.float32, "cuda")
     first = sorted(apply_kernels(m, mode="force").patched)  # the second call empties the first report
     second = apply_kernels(m, mode="force")  # e.g. a model reloaded into the same object, or a second call
@@ -211,6 +214,4 @@ def test_applying_kernels_twice_does_not_stack_wrappers_and_restore_still_clears
     assert (ref(x).logits - m(x).logits).abs().max() < 1e-3
     restore_kernels(m)
     assert patched_forwards(m) == 0
-    import transformers.models.qwen2.modeling_qwen2 as q2
-
-    assert q2.apply_rotary_pos_emb.__module__ == "transformers.models.qwen2.modeling_qwen2"
+    assert q2.apply_rotary_pos_emb is before  # restore puts back exactly what was there, not a wrapper
